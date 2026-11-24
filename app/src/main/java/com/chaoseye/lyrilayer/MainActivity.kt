@@ -129,6 +129,7 @@ class MainActivity : ComponentActivity() {
         var aiModel by remember{mutableStateOf(DeviceLyrics.selected(this).id)}
         var aiThreads by remember{mutableIntStateOf(aiPrefs.getInt(AiPerformance.THREADS_KEY,0))}
         var aiReuse by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.REUSE_KEY,true))}
+        var onlineBeforeAi by remember { mutableStateOf(OnlineLyricsSettings.enabled(this)) }
         var autoSaveExtract by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.EXTRACT_KEY,AiAutoSave.DEFAULT_ENABLED))}
         var autoSaveAlign by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.ALIGN_KEY,AiAutoSave.DEFAULT_ENABLED))}
         var reviewUncertain by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.REVIEW_UNCERTAIN_KEY,AiAutoSave.DEFAULT_ENABLED))}
@@ -419,6 +420,10 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         HorizontalDivider()
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){Text("AI 분석 전 온라인 가사 검색");Text("LyricKit · 지니 / 벅스",fontSize=12.sp)}
+                            Switch(onlineBeforeAi,{onlineBeforeAi=it;aiPrefs.edit().putBoolean(OnlineLyricsSettings.ENABLED,it).apply()})
+                        }
                         Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 지니·벅스 및 보조 검색 서비스 LRCLIB에 전송할 수 있습니다. 음악 파일이나 알림은 전송하지 않습니다.")
                         HorizontalDivider()
                         if(updateSupported){

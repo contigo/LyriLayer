@@ -70,10 +70,10 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
                 }
             }
             Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                Button(enabled=!live.running&&pending>0&&modelReady,onClick={AiQueue.start(context)},modifier=Modifier.weight(1f)){Text("분석 시작 / 재개")}
+                Button(enabled=!live.running&&pending>0&&(modelReady||OnlineLyricsSettings.enabled(context)),onClick={AiQueue.start(context)},modifier=Modifier.weight(1f)){Text("분석 시작 / 재개")}
                 OutlinedButton(enabled=live.running&&!live.stopping,onClick={AiQueue.pause()}){Text("중지")}
             }
-            if(!modelReady)Text("설정에서 AI 모델을 다운로드하세요.",fontSize=12.sp)
+            if(!modelReady)Text("온라인 가사를 먼저 검색합니다. 검색 실패 시 AI 모델이 필요합니다.",fontSize=12.sp)
         }
     }
     if(notice.isNotBlank())Text(notice,fontSize=12.sp)

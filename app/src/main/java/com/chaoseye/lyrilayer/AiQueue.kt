@@ -43,7 +43,7 @@ internal object AiQueue {
     fun start(context:Context) {
         if(task?.isActive==true||_live.value.running)return
         val c=context.applicationContext
-        if(!DeviceLyrics.supported()||!DeviceLyrics.ready(c)){_notice.value="AI 모델을 먼저 다운로드하세요.";return}
+        if(!OnlineLyricsSettings.enabled(c)&&(!DeviceLyrics.supported()||!DeviceLyrics.ready(c))){_notice.value="AI 모델을 먼저 다운로드하세요.";return}
         if(!FloatingPermissions.audioGranted(c)){_notice.value="음악 접근 권한을 허용하세요.";return}
         _live.value=QueueLive(running=true,stage="대기열 준비")
         task=scope.launch {
@@ -62,13 +62,47 @@ internal object AiQueue {
                     val t=tracks[item.key]
                     val db=LyricsDb.get(c).dao()
                     try {
-                        val before=db.get(item.key)
-                        val kind=t?.let{AiQueueRules.kind(it,before)}
+                        var before=db.get(item.key)
+                        var kind=t?.let{AiQueueRules.kind(it,before)}
                         if(t==null||kind==null) {
                             dao.update(item.copy(state="skipped",message="음원 없음 또는 이미 싱크 등록됨"));active=null;continue
                         }
                         val started=android.os.SystemClock.elapsedRealtime()
                         _live.value=QueueLive(running=true,key=item.key,stage="AI 분석 준비",startedAt=started,completedCount=completedCount,elapsedTotal=elapsedTotal)
+                        if (OnlineLyricsSettings.enabled(c)) {
+                            _live.update { it.copy(stage="온라인 가사 검색") }
+                            val online = try {
+                                LyricKitBridge.toLyric(t, LyricKitBridge.lookup(t))
+                            } catch(e: CancellationException) { throw e } catch(e: Exception) { null }
+                            currentCoroutineContext().ensureActive()
+                            if (online != null) {
+                                val baseline = AiQueueRules.fingerprint(before)
+                                val current = LyricsDb.get(c).withTransaction {
+                                    val latest = db.get(item.key)
+                                    if (AiQueueRules.fingerprint(latest) == baseline && latest?.edited != true) {
+                                        val preservePlain = latest?.plain?.isNotBlank() == true
+                                        val compatible = !preservePlain || PlainSync.rows(latest!!.plain) == PlainSync.rows(online.plain)
+                                        if (compatible) {
+                                            val value = if (preservePlain) online.copy(plain=latest!!.plain,offset=latest.offset) else online
+                                            if (value.synced.isNotBlank() || latest?.plain.isNullOrBlank()) db.put(value)
+                                        }
+                                    }
+                                    db.get(item.key)
+                                }
+                                before = current
+                                kind = AiQueueRules.kind(t,current)
+                                if (kind == null) {
+                                    completedCount++; elapsedTotal += android.os.SystemClock.elapsedRealtime()-started
+                                    dao.update(item.copy(state="saved",message="온라인 싱크 가사 등록 완료"))
+                                    _live.update { it.copy(percent=100,stage="온라인 가사 완료",completedCount=completedCount,elapsedTotal=elapsedTotal) }
+                                    Playback.retry.value++
+                                    active=null
+                                    continue
+                                }
+                            }
+                        }
+                        if (!DeviceLyrics.supported() || !DeviceLyrics.ready(c)) error("온라인 싱크 가사 없음 · AI 모델을 다운로드하세요.")
+                        _live.update { it.copy(stage="AI 분석 준비") }
                         val raw=DeviceLyrics.extract(c,t,item.language,preview={text->
                             _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(preview=text)else old}
                         }){n,stage->
