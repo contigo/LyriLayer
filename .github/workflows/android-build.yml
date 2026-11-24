@@ -78,7 +78,7 @@ jobs:
           fi
           "$TOOLS/apksigner" verify --verbose --print-certs artifacts/LyriLayer-dev.apk
           "$TOOLS/zipalign" -c -P 16 4 artifacts/LyriLayer-dev.apk
-          "$TOOLS/aapt" dump badging artifacts/LyriLayer-dev.apk | grep -E "^package: name=\x27com\.chaoseye\.lyrilayer\.debug\x27" > /dev/null
+          "$TOOLS/aapt" dump badging artifacts/LyriLayer-dev.apk | grep -F "package: name='com.chaoseye.lyrilayer.debug'" > /dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: LyriLayer-APK
