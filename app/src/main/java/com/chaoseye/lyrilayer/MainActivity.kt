@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,7 +67,9 @@ class MainActivity : ComponentActivity() {
         fun resultColor(status:String):Color=when(status){"FOUND","INSTRUMENTAL"->successColor;"NOT_FOUND","ERROR"->failureColor;"RUNNING"->runningColor;else->neutralColor}
         var query by remember { mutableStateOf("") }
         var lyricFilter by rememberSaveable { mutableStateOf("all") }
-        var page by remember { mutableIntStateOf(0) }
+        var page by rememberSaveable { mutableIntStateOf(0) }
+        var positionSettings by rememberSaveable { mutableStateOf(false) }
+        BackHandler(enabled=page==2&&positionSettings){positionSettings=false}
         var edit by remember { mutableStateOf<Track?>(null) }
         var manualSearch by remember { mutableStateOf<Track?>(null) }
         var aiTrack by remember { mutableStateOf<Track?>(null) }
@@ -159,8 +162,33 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
-        Scaffold(bottomBar={ NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
+        Scaffold(bottomBar={ if(!(page==2&&positionSettings)) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;positionSettings=false},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                if(page==2&&positionSettings){
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        TextButton(onClick={positionSettings=false}){Text("‹ 뒤로")}
+                        Text("가사 표시 위치",style=MaterialTheme.typography.titleLarge,fontSize=22.sp)
+                    }
+                        Text("화면의 위아래 위치를 조절하세요. 실제 가사와 테스트 모드에 함께 적용됩니다.",fontSize=14.sp)
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+                            Text("위치: $overlayPosition%",fontSize=16.sp)
+                            TextButton(onClick={saveOverlayPosition(OverlayPosition.DEFAULT)}){Text("기본 위치")}
+                        }
+                        Slider(value=overlayPosition.toFloat(),onValueChange={saveOverlayPosition(it.roundToInt())},valueRange=0f..100f)
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                            TextButton(onClick={saveOverlayPosition(0)}){Text("상단")}
+                            TextButton(onClick={saveOverlayPosition(50)}){Text("중앙")}
+                            TextButton(onClick={saveOverlayPosition(100)}){Text("하단")}
+                        }
+                        BoxWithConstraints(Modifier.width(150.dp).height(230.dp).align(Alignment.CenterHorizontally).border(1.dp,MaterialTheme.colorScheme.outline,RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(18.dp)).padding(8.dp)){
+                            Text("화면 미리보기",modifier=Modifier.align(Alignment.Center),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            Box(Modifier.align(Alignment.TopCenter).offset(y=(maxHeight-40.dp)*(overlayPosition/100f)).fillMaxWidth().height(40.dp).background(Color(0xDD000000),RoundedCornerShape(8.dp)).padding(4.dp),contentAlignment=Alignment.Center){
+                                Text("가사 표시 위치",fontSize=12.sp,color=Color.White)
+                            }
+                        }
+
+                    Text("변경한 위치는 자동 저장되며, 음악 재생 중인 플로팅에도 바로 반영됩니다.",fontSize=14.sp,color=neutralColor)
+                }else{
                 Text("LyriLayer",style=MaterialTheme.typography.headlineMedium,fontSize=30.sp)
                 when(page) {
                     0 -> {
@@ -272,22 +300,13 @@ class MainActivity : ComponentActivity() {
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
                         Text("싱크 가사가 있는 곡이 재생 중이면 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
                         HorizontalDivider()
-                        Text("가사 표시 위치",style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
-                        Text("화면의 위아래 위치를 조절하세요. 실제 가사와 테스트 모드에 함께 적용됩니다.",fontSize=14.sp)
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                            Text("위치: $overlayPosition%",fontSize=16.sp)
-                            TextButton(onClick={saveOverlayPosition(OverlayPosition.DEFAULT)}){Text("기본 위치")}
-                        }
-                        Slider(value=overlayPosition.toFloat(),onValueChange={saveOverlayPosition(it.roundToInt())},valueRange=0f..100f)
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
-                            TextButton(onClick={saveOverlayPosition(0)}){Text("상단")}
-                            TextButton(onClick={saveOverlayPosition(50)}){Text("중앙")}
-                            TextButton(onClick={saveOverlayPosition(100)}){Text("하단")}
-                        }
-                        BoxWithConstraints(Modifier.width(150.dp).height(230.dp).align(Alignment.CenterHorizontally).border(1.dp,MaterialTheme.colorScheme.outline,RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(18.dp)).padding(8.dp)){
-                            Text("화면 미리보기",modifier=Modifier.align(Alignment.Center),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            Box(Modifier.align(Alignment.TopCenter).offset(y=(maxHeight-40.dp)*(overlayPosition/100f)).fillMaxWidth().height(40.dp).background(Color(0xDD000000),RoundedCornerShape(8.dp)).padding(4.dp),contentAlignment=Alignment.Center){
-                                Text("가사 표시 위치",fontSize=12.sp,color=Color.White)
+                        OutlinedButton(onClick={positionSettings=true},modifier=Modifier.fillMaxWidth()){
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f)){
+                                    Text("가사 표시 위치",fontSize=16.sp)
+                                    Text("현재 위치: $overlayPosition%",fontSize=12.sp,color=neutralColor)
+                                }
+                                Text("›",fontSize=24.sp)
                             }
                         }
                         HorizontalDivider()
@@ -296,7 +315,7 @@ class MainActivity : ComponentActivity() {
                             Text("테스트 모드",Modifier.weight(1f),fontSize=16.sp)
                             Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it){if(!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}})
                         }
-                        Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 테스트 문구를 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
+                        Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 현재 재생 중인 곡 제목을 테스트 플로팅에 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
                         Text("알림 접근: "+if(listenerAllowed)"허용됨" else "권한 필요",color=if(listenerAllowed)successColor else failureColor,fontSize=14.sp)
                         Text("음악 감지 서비스: "+if(listenerConnected)"연결됨" else "연결 대기",color=if(listenerConnected)successColor else neutralColor,fontSize=14.sp)
                         Text("다른 앱 위에 표시: "+if(overlayAllowed)"허용됨" else "권한 필요",color=if(overlayAllowed)successColor else failureColor,fontSize=14.sp)
@@ -317,6 +336,7 @@ class MainActivity : ComponentActivity() {
                         if(modelBusy)LinearProgressIndicator(progress={modelProgress/100f},modifier=Modifier.fillMaxWidth())
                         if(modelMessage.isNotBlank())Text(modelMessage,style=MaterialTheme.typography.bodySmall)
                     }
+                }
                 }
             }
         }

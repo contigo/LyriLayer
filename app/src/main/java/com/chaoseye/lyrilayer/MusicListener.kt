@@ -69,13 +69,13 @@ class MusicListener : NotificationListenerService() {
                 val playing=state?.state==PlaybackState.STATE_PLAYING
                 val permission=Settings.canDrawOverlays(this@MusicListener)
                 val interactive=getSystemService(PowerManager::class.java).isInteractive
-                // Test intentionally bypasses metadata, file matching, network and lyric lookup.
+                // Test uses metadata only for the title; missing metadata never blocks the overlay.
                 if(testMode){
                     fetch?.cancel();fetch=null;activeKey=null;lyric=null;lines=emptyList()
                     val track=if(title.isBlank())null else Track(title,m?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty(),m?.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty(),m?.getLong(MediaMetadata.METADATA_KEY_DURATION)?:0)
                     val reason=OverlayTest.status(playing,permission,interactive)
                     val status=if(reason==null){
-                        if(show(OverlayTest.TEXT))"테스트 플로팅 표시 중" else overlayFailure.ifBlank{"오버레이 표시 실패"}
+                        if(show(OverlayTest.text(title.ifBlank{m?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).orEmpty()})))"테스트 플로팅 표시 중" else overlayFailure.ifBlank{"오버레이 표시 실패"}
                     }else{hide();if(!playing&&controller==null)sessionStatus else reason}
                     Playback.now.value=NowPlaying(track=track,playing=playing,position=state?.position?.coerceAtLeast(0)?:0, message="플로팅 테스트 모드",overlayStatus=status)
                     delay(150);continue
