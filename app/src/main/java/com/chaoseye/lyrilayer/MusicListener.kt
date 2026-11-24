@@ -10,6 +10,10 @@ import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.SystemClock
+import android.os.Build
+import android.view.WindowInsets
+import android.view.View
+import android.util.DisplayMetrics
 import android.os.PowerManager
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
@@ -133,20 +137,59 @@ class MusicListener : NotificationListenerService() {
             }
         }
     }
-    private fun show(value: String):Boolean {
-        if(overlay?.text?.toString()==value) return true
-        if(overlay==null&&overlayFailure.isNotBlank()&&SystemClock.elapsedRealtime()-overlayFailureAt<2000)return false
-        if(overlay==null) {
-            val dp=resources.displayMetrics.density
-            val view=TextView(this).apply { setTextColor(Color.WHITE); textSize=18f; gravity=Gravity.CENTER; setPadding((16*dp).toInt(),(10*dp).toInt(),(16*dp).toInt(),(10*dp).toInt()); background=GradientDrawable().apply { setColor(0xE6000000.toInt()); cornerRadius=16*dp } }
-            val p=WindowManager.LayoutParams((resources.displayMetrics.widthPixels*0.88).toInt(),WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,PixelFormat.TRANSLUCENT).apply { gravity=Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; y=(100*dp).toInt(); alpha=0.78f }
-            try { wm.addView(view,p); overlay=view;overlayFailure="" } catch(e: Exception) {
-                overlayFailureAt=SystemClock.elapsedRealtime();overlayFailure="오버레이 표시 실패: "+e.javaClass.simpleName
-                android.util.Log.w("LyriLayer","Overlay attach failed",e);return false
-            }
+    // Use the current display area so rotation and screen size changes are reflected.
+    @Suppress("DEPRECATION")
+    private fun overlayArea():Pair<Int,Int> {
+        if(Build.VERSION.SDK_INT>=30){
+            val metrics=wm.currentWindowMetrics
+            val insets=metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            return (metrics.bounds.width()-insets.left-insets.right).coerceAtLeast(1) to
+                (metrics.bounds.height()-insets.top-insets.bottom).coerceAtLeast(1)
         }
-        overlay?.text=value
-        return overlay!=null
+        val metrics=DisplayMetrics()
+        wm.defaultDisplay.getMetrics(metrics)
+        return metrics.widthPixels.coerceAtLeast(1) to metrics.heightPixels.coerceAtLeast(1)
+    }
+    private fun show(value:String):Boolean {
+        if(overlayFailure.isNotBlank()&&SystemClock.elapsedRealtime()-overlayFailureAt<2000)return false
+        val dp=resources.displayMetrics.density
+        val (areaWidth,areaHeight)=overlayArea()
+        val width=(areaWidth*0.88f).toInt().coerceAtLeast(1)
+        val percent=OverlayPosition.normalize(getSharedPreferences("settings",Context.MODE_PRIVATE).getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))
+        val existing=overlay
+        val view=existing?:TextView(this).apply {
+            setTextColor(Color.WHITE);textSize=18f;gravity=Gravity.CENTER
+            setPadding((16*dp).toInt(),(10*dp).toInt(),(16*dp).toInt(),(10*dp).toInt())
+            background=GradientDrawable().apply { setColor(0xE6000000.toInt());cornerRadius=16*dp }
+        }
+        try {
+            val changed=view.text.toString()!=value
+            if(changed)view.text=value
+            val oldParams=existing?.layoutParams as? WindowManager.LayoutParams
+            if(view.maxHeight!=areaHeight)view.maxHeight=areaHeight
+            // Re-measure even when only the position or display size changed.
+            view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(areaHeight,View.MeasureSpec.AT_MOST))
+            val y=OverlayPosition.topOffset(percent,areaHeight,view.measuredHeight,(8*dp).toInt())
+            if(oldParams==null){
+                val params=WindowManager.LayoutParams(width,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,PixelFormat.TRANSLUCENT).apply {
+                    gravity=Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    this.y=y;alpha=0.78f
+                    if(Build.VERSION.SDK_INT>=30){
+                        setFitInsetsTypes(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                        setFitInsetsIgnoringVisibility(true)
+                    }
+                }
+                wm.addView(view,params);overlay=view
+            }else if(oldParams.y!=y||oldParams.width!=width){
+                oldParams.y=y;oldParams.width=width;wm.updateViewLayout(view,oldParams)
+            }
+            overlayFailure=""
+            return true
+        }catch(e:Exception){
+            hide();overlayFailureAt=SystemClock.elapsedRealtime()
+            overlayFailure="오버레이 표시 실패: "+e.javaClass.simpleName
+            android.util.Log.w("LyriLayer","Overlay layout failed",e);return false
+        }
     }
     private fun hide() { overlay?.let { runCatching { wm.removeViewImmediate(it) } }; overlay=null }
     override fun onListenerDisconnected() {

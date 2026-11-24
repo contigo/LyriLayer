@@ -14,6 +14,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -84,6 +88,11 @@ class MainActivity : ComponentActivity() {
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
         var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
+        var overlayPosition by remember { mutableIntStateOf(OverlayPosition.normalize(prefs.getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))) }
+        fun saveOverlayPosition(value:Int){
+            overlayPosition=OverlayPosition.normalize(value)
+            prefs.edit().putInt(OverlayPosition.KEY,overlayPosition).apply()
+        }
         // Save the pass across rotations; each permission is offered only once per launch/pass.
         var permissionPass by rememberSaveable { mutableStateOf(true) }
         var permissionAttempted by rememberSaveable { mutableIntStateOf(0) }
@@ -208,6 +217,25 @@ class MainActivity : ComponentActivity() {
                         Button(onClick={requestAccess(RequiredAccess.OVERLAY)}) { Text("다른 앱 위에 표시 권한") }
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
                         Text("싱크 가사가 있는 곡이 재생 중이면 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
+                        HorizontalDivider()
+                        Text("가사 표시 위치",style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
+                        Text("화면의 위아래 위치를 조절하세요. 실제 가사와 테스트 모드에 함께 적용됩니다.",fontSize=14.sp)
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+                            Text("위치: $overlayPosition%",fontSize=16.sp)
+                            TextButton(onClick={saveOverlayPosition(OverlayPosition.DEFAULT)}){Text("기본 위치")}
+                        }
+                        Slider(value=overlayPosition.toFloat(),onValueChange={saveOverlayPosition(it.roundToInt())},valueRange=0f..100f)
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                            TextButton(onClick={saveOverlayPosition(0)}){Text("상단")}
+                            TextButton(onClick={saveOverlayPosition(50)}){Text("중앙")}
+                            TextButton(onClick={saveOverlayPosition(100)}){Text("하단")}
+                        }
+                        BoxWithConstraints(Modifier.width(150.dp).height(230.dp).align(Alignment.CenterHorizontally).border(1.dp,MaterialTheme.colorScheme.outline,RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(18.dp)).padding(8.dp)){
+                            Text("화면 미리보기",modifier=Modifier.align(Alignment.Center),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            Box(Modifier.align(Alignment.TopCenter).offset(y=(maxHeight-40.dp)*(overlayPosition/100f)).fillMaxWidth().height(40.dp).background(Color(0xDD000000),RoundedCornerShape(8.dp)).padding(4.dp),contentAlignment=Alignment.Center){
+                                Text("가사 표시 위치",fontSize=12.sp,color=Color.White)
+                            }
+                        }
                         HorizontalDivider()
                         Text("플로팅 실행 테스트",style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
                         Row(verticalAlignment=Alignment.CenterVertically){
