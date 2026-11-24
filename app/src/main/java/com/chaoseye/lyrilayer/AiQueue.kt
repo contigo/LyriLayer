@@ -69,7 +69,7 @@ internal object AiQueue {
                         val raw=DeviceLyrics.extract(c,t,item.language,preview={text->
                             _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(preview=text)else old}
                         }){n,stage->
-                            _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(percent=n.coerceIn(0,100),stage=stage)}
+                            _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(percent=n.coerceIn(0,100),stage=stage)else old}
                         }
                         currentCoroutineContext().ensureActive()
                         val heard=Lrc.parse(raw).filter{it.text.isNotBlank()&&it.ms<t.duration}
