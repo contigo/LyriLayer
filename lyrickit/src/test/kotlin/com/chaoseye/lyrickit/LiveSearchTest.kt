@@ -28,6 +28,13 @@ class LiveSearchTest {
                 catch(e: Exception) { println("LIVE ${provider.source} $label error=${e.javaClass.simpleName}") }
             }
         }
+        // Diagnostic only: distinguish failure to find a track from unavailable lyrics.
+        try {
+            val genie=GenieProvider(http)
+            val known=genie.lyrics(TrackCandidate("100529466",clean))
+            println("LIVE GENIE known-id plain=${!known?.plainLyrics.isNullOrBlank()} syncLines=${known?.syncedLines?.size ?: 0}")
+        } catch(e: CancellationException) { throw e }
+        catch(e: Exception) { println("LIVE GENIE known-id error=${e.javaClass.simpleName}") }
         val outcome=createLyricKit().searchDetailed(clean)
         when(outcome) {
             is SearchOutcome.Found -> println("LIVE engine found provider=${outcome.result.provider} score=${outcome.result.matchScore} plain=${!outcome.result.plainLyrics.isNullOrBlank()} syncLines=${outcome.result.syncedLines.size} failures=${outcome.failedProviders}")

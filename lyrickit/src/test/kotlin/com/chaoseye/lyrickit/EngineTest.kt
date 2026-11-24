@@ -24,6 +24,34 @@ class EngineTest {
         assertTrue(SongNormalizer.truncatedCreditMatches(raw,bugs))
         assertFalse(SongNormalizer.truncatedCreditMatches(raw,bugs.copy(artist="Rosa Walton, Other Artist")))
     }
+    @Test fun genieSearchRows() {
+        val html="""<table><tr class="list" songid="42"><td class="info">
+            <a class="title ellipsis" title="Example">Example</a>
+            <a class="artist ellipsis" title="Artist">Artist</a>
+            <span class="duration">04:06</span></td></tr></table>"""
+        val track=parseGenieTracks(html).single()
+        assertEquals("42",track.id)
+        assertEquals(SongInfo("Example","Artist",durationMs=246000),track.song)
+        assertTrue(parseGenieTracks("<html></html>").isEmpty())
+    }
+    @Test fun truncatedSearchRetriesAndRejectsAmbiguity() = runBlocking {
+        val raw=SongInfo("Example soundtrack - Example by First Artist & ha","",durationMs=246000)
+        val exact=SongInfo("Example","First Artist & Hallie",durationMs=246000)
+        val alternate=exact.copy(artist="First Artist & Hannah")
+        var broadCalls=0
+        val fake=object:LyricsProvider {
+            override val source=Provider.BUGS
+            override suspend fun search(song:SongInfo):List<TrackCandidate> {
+                if(song.artist.contains("&")) return listOf(TrackCandidate("noise",exact.copy(title="Unrelated")))
+                broadCalls++
+                return listOf(TrackCandidate("1",exact),TrackCandidate("2",alternate))
+            }
+            override suspend fun lyrics(candidate:TrackCandidate):LyricsResult =
+                LyricsResult(candidate.song,source,0f,"A",null,emptyList())
+        }
+        assertTrue(LyricKit(listOf(fake)).searchDetailed(raw) is SearchOutcome.NotFound)
+        assertEquals(1,broadCalls)
+    }
     @Test fun parses() {
         val lines = LrcParser.fromBugs("7.305|첫 줄＃8.3|둘째 줄")
         assertEquals(7305L, lines.first().startTimeMs)

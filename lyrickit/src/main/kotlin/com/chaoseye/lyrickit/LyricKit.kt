@@ -28,20 +28,27 @@ class LyricKit(private val providers: List<LyricsProvider>, private val timeoutM
             var failed = false
             try {
                 withTimeoutOrNull(timeoutMs) {
-                    val variants = SongNormalizer.searchVariants(song)
+                    fun score(candidate: TrackCandidate): Float {
+                        val direct = LyricsMatcher.score(normalized,candidate.song)
+                        val a=normalized.durationMs
+                        val b=candidate.song.durationMs
+                        val inferred = if (direct == 0f && SongNormalizer.truncatedCreditMatches(song,candidate.song)
+                            && a != null && b != null && a > 0 && b > 0 && kotlin.math.abs(a-b) <= 2000L)
+                            LyricsMatcher.score(normalized.copy(artist=candidate.song.artist),candidate.song).coerceAtMost(90f) else 0f
+                        return maxOf(direct,inferred)
+                    }
                     val candidates = mutableListOf<TrackCandidate>()
+                    val variants = SongNormalizer.searchVariants(song)
                     for (variant in variants) {
                         candidates += provider.search(variant)
-                        if (candidates.isNotEmpty()) break
+                        // Truncated credits require the broader variant to detect ambiguous artists.
+                        if (variants.size == 1 || candidates.any { LyricsMatcher.score(normalized,it.song) >= minimumScore }) break
                     }
-                    val matches = candidates.distinctBy { it.id }.map { candidate ->
-                        val direct = LyricsMatcher.score(normalized,candidate.song)
-                        val inferred = if (direct == 0f && SongNormalizer.truncatedCreditMatches(song,candidate.song)
-                            && normalized.durationMs != null && candidate.song.durationMs != null)
-                            LyricsMatcher.score(normalized.copy(artist=candidate.song.artist),candidate.song).coerceAtMost(90f) else 0f
-                        candidate to maxOf(direct,inferred)
-                    }
-                        .filter { it.second >= minimumScore }.sortedByDescending { it.second }.take(3)
+                    val ranked = candidates.distinctBy { it.id }.map { it to score(it) }.filter { it.second >= minimumScore }
+                    val inferredArtists=ranked.filter { LyricsMatcher.score(normalized,it.first.song) == 0f }
+                        .map { it.first.song.artist.trim().lowercase(java.util.Locale.ROOT) }.distinct()
+                    val matches = ranked.filter { inferredArtists.size <= 1 || LyricsMatcher.score(normalized,it.first.song) >= minimumScore }
+                        .sortedByDescending { it.second }.take(3)
                     for ((candidate, score) in matches) {
                         try {
                             provider.lyrics(candidate)?.takeIf { it.syncedLines.isNotEmpty() || !it.plainLyrics.isNullOrBlank() }

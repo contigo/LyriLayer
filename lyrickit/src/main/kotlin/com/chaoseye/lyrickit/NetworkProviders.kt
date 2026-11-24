@@ -45,19 +45,35 @@ internal fun result(c: TrackCandidate, source: Provider, lines: List<LyricLine>,
 internal class GenieProvider(private val http: LyricsHttp) : LyricsProvider {
     override val source = Provider.GENIE
     override suspend fun search(song: SongInfo): List<TrackCandidate> {
-        val body = http.get("https://www.genie.co.kr/search/searchMain", mapOf("query" to "${song.title} ${song.artist}")) ?: return emptyList()
-        return Jsoup.parse(body).select("tr.list[songid]").mapNotNull { row ->
-            fun display(selector: String): String? { val el = row.selectFirst(selector) ?: return null; el.select("span.icon,span[class^=icon-]").remove(); return el.attr("title").ifBlank { el.text() }.trim().takeIf { it.isNotEmpty() } }
-            val title = display("td.info a.title.ellipsis") ?: return@mapNotNull null
-            val artist = display("td.info a.artist.ellipsis") ?: return@mapNotNull null
-            TrackCandidate(row.attr("songid"), SongInfo(title,artist,durationMs=duration(row.select("td.info span.duration").text())))
-        }.distinctBy { it.id }
+        suspend fun query(value: String): List<TrackCandidate> {
+            val body = http.get("https://www.genie.co.kr/search/searchMain", mapOf("query" to value)) ?: return emptyList()
+            return parseGenieTracks(body)
+        }
+        val combined = listOf(song.title,song.artist).filter { it.isNotBlank() }.joinToString(" ")
+        val first = query(combined)
+        if (song.artist.isBlank() || first.any { LyricsMatcher.score(song,it.song) >= 85f }) return first
+        // Some Genie searches do not tokenize combined English artist/title text.
+        // Retry only the title; the engine still validates title and artist before fetching lyrics.
+        return (first + query(song.title)).distinctBy { it.id }
     }
     override suspend fun lyrics(candidate: TrackCandidate): LyricsResult? {
         val body = http.get("https://dn.genie.co.kr/app/purchase/get_msl.asp",mapOf("path" to "a", "songid" to candidate.id),mapOf("Referer" to "https://www.genie.co.kr/")) ?: return null
         return result(candidate,source,parseGenie(body),null)
     }
 }
+internal fun parseGenieTracks(body: String): List<TrackCandidate> =
+    Jsoup.parse(body).select("tr.list[songid]").mapNotNull { row ->
+        fun display(selector: String): String? {
+            val el = row.selectFirst(selector) ?: return null
+            el.select("span.icon,span[class^=icon-]").remove()
+            return el.attr("title").ifBlank { el.text() }.trim().takeIf { it.isNotEmpty() }
+        }
+        val id=row.attr("songid").takeIf { it.isNotBlank() && it.all(Char::isDigit) } ?: return@mapNotNull null
+        val title=display("td.info a.title.ellipsis") ?: return@mapNotNull null
+        val artist=display("td.info a.artist.ellipsis") ?: return@mapNotNull null
+        TrackCandidate(id,SongInfo(title,artist,album=display("td.info a.albumtitle"),durationMs=duration(row.select("td.info span.duration").text())))
+    }.distinctBy { it.id }
+
 internal fun parseGenie(body: String): List<LyricLine> {
     if (body.isBlank() || body.trim().equals("NOT FOUND LYRICS",true)) return emptyList()
     val start = body.indexOf('('); val end = body.lastIndexOf(')')
