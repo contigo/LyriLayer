@@ -68,8 +68,8 @@ class MainActivity : ComponentActivity() {
         var query by remember { mutableStateOf("") }
         var lyricFilter by rememberSaveable { mutableStateOf("all") }
         var page by rememberSaveable { mutableIntStateOf(0) }
-        var positionSettings by rememberSaveable { mutableStateOf(false) }
-        BackHandler(enabled=page==2&&positionSettings){positionSettings=false}
+        var settingsScreen by rememberSaveable { mutableStateOf("main") }
+        BackHandler(enabled=page==2&&settingsScreen!="main"){settingsScreen="main"}
         var edit by remember { mutableStateOf<Track?>(null) }
         var manualSearch by remember { mutableStateOf<Track?>(null) }
         var aiTrack by remember { mutableStateOf<Track?>(null) }
@@ -162,11 +162,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
-        Scaffold(bottomBar={ if(!(page==2&&positionSettings)) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;positionSettings=false},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
+        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main"},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                if(page==2&&positionSettings){
+                if(page==2&&settingsScreen=="position"){
                     Row(verticalAlignment=Alignment.CenterVertically){
-                        TextButton(onClick={positionSettings=false}){Text("‹ 뒤로")}
+                        TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")}
                         Text("가사 표시 위치",style=MaterialTheme.typography.titleLarge,fontSize=22.sp)
                     }
                         Text("화면의 위아래 위치를 조절하세요. 실제 가사와 테스트 모드에 함께 적용됩니다.",fontSize=14.sp)
@@ -188,6 +188,25 @@ class MainActivity : ComponentActivity() {
                         }
 
                     Text("변경한 위치는 자동 저장되며, 음악 재생 중인 플로팅에도 바로 반영됩니다.",fontSize=14.sp,color=neutralColor)
+                }else if(page==2&&settingsScreen=="test"){
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")}
+                        Text("플로팅 실행 테스트",style=MaterialTheme.typography.titleLarge,fontSize=22.sp)
+                    }
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Text("테스트 모드",Modifier.weight(1f),fontSize=16.sp)
+                            Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it){if(!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}})
+                        }
+                        Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 현재 재생 중인 곡 제목을 테스트 플로팅에 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
+                        Text("알림 접근: "+if(listenerAllowed)"허용됨" else "권한 필요",color=if(listenerAllowed)successColor else failureColor,fontSize=14.sp)
+                        Text("음악 감지 서비스: "+if(listenerConnected)"연결됨" else "연결 대기",color=if(listenerConnected)successColor else neutralColor,fontSize=14.sp)
+                        Text("다른 앱 위에 표시: "+if(overlayAllowed)"허용됨" else "권한 필요",color=if(overlayAllowed)successColor else failureColor,fontSize=14.sp)
+                        Text("재생 감지: "+if(now.playing)"재생 중" else "재생 대기",color=if(now.playing)successColor else neutralColor,fontSize=14.sp)
+                        Text("현재 곡: "+(now.track?.title?.takeIf{it.isNotBlank()} ?: "곡 정보 대기"),fontSize=16.sp)
+                        Text("플로팅 상태: "+if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"서비스 연결 대기" else now.overlayStatus,fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
+                        OutlinedButton(onClick={if(listenerAllowed)NotificationListenerService.requestRebind(listenerComponent);Playback.retry.value++}){Text("음악 감지 다시 연결")}
+
+                    if(!listenerAllowed||!overlayAllowed)Button(onClick={startAccessPass()}){Text("필수 권한 설정")}
                 }else{
                 Text("LyriLayer",style=MaterialTheme.typography.headlineMedium,fontSize=30.sp)
                 when(page) {
@@ -300,7 +319,7 @@ class MainActivity : ComponentActivity() {
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
                         Text("싱크 가사가 있는 곡이 재생 중이면 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
                         HorizontalDivider()
-                        OutlinedButton(onClick={positionSettings=true},modifier=Modifier.fillMaxWidth()){
+                        OutlinedButton(onClick={settingsScreen="position"},modifier=Modifier.fillMaxWidth()){
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                                 Column(Modifier.weight(1f)){
                                     Text("가사 표시 위치",fontSize=16.sp)
@@ -310,18 +329,15 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         HorizontalDivider()
-                        Text("플로팅 실행 테스트",style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Text("테스트 모드",Modifier.weight(1f),fontSize=16.sp)
-                            Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it){if(!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}})
+                        OutlinedButton(onClick={settingsScreen="test"},modifier=Modifier.fillMaxWidth()){
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f)){
+                                    Text("플로팅 실행 테스트",fontSize=16.sp)
+                                    Text(if(testMode)"테스트 모드 ON" else "테스트 모드 OFF",fontSize=12.sp,color=if(testMode)successColor else neutralColor)
+                                }
+                                Text("›",fontSize=24.sp)
+                            }
                         }
-                        Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 현재 재생 중인 곡 제목을 테스트 플로팅에 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
-                        Text("알림 접근: "+if(listenerAllowed)"허용됨" else "권한 필요",color=if(listenerAllowed)successColor else failureColor,fontSize=14.sp)
-                        Text("음악 감지 서비스: "+if(listenerConnected)"연결됨" else "연결 대기",color=if(listenerConnected)successColor else neutralColor,fontSize=14.sp)
-                        Text("다른 앱 위에 표시: "+if(overlayAllowed)"허용됨" else "권한 필요",color=if(overlayAllowed)successColor else failureColor,fontSize=14.sp)
-                        Text("재생 감지: "+if(now.playing)"재생 중" else "재생 대기",color=if(now.playing)successColor else neutralColor,fontSize=14.sp)
-                        Text("플로팅 상태: "+if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"서비스 연결 대기" else now.overlayStatus,fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
-                        OutlinedButton(onClick={if(listenerAllowed)NotificationListenerService.requestRebind(listenerComponent);Playback.retry.value++}){Text("음악 감지 다시 연결")}
                         HorizontalDivider()
                         Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 LRCLIB에 전송합니다. 음악 파일이나 알림은 전송하지 않습니다.")
                         HorizontalDivider()
