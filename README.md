@@ -57,3 +57,8 @@ Apache License 2.0 (LICENSE).
 - MediaCodec 디코딩, 16 kHz 모노 PCM, 25초 단위 AI 추론, LRC 타임스탬프. 최대 12분, 앱을 열어 두어야 함. 보컬 분리 미구현; 노래 인식 정확도와 실제 기기 성능 미검증.
 - 로컬 LRC (접근 가능한 경로), MP3 ID3 USLT/ULT 및 FLAC LYRICS 태그, SAF 파일 가져오기. M4A 내장 가사 및 SYLT 태그는 후속 지원 예정.
 - Whisper.cpp 및 Whisper 모델 MIT 라이선스: https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/LICENSE ; https://huggingface.co/ggerganov/whisper.cpp .
+
+## v0.1.7 — 고정 APK 서명
+- Windows에서 `tools/setup-signing.ps1`을 한 번 실행해 전용 PKCS12 키 및 GitHub Actions Secrets를 등록합니다. 키와 비밀번호는 공개 저장소에 올리지 않습니다.
+- 이후 모든 배포 APK는 동일 키로 재서명하고 apksigner 검증 및 zipalign 확인 후 등록합니다. Secrets 누락 시 빌드를 중단합니다.
+- 기존 임시 debug 키로 설치된 앱은 해당 개인 키를 복구할 수 없다면 데이터 백업 후 1회 재설치가 필요합니다. 이후 동일 키로 업데이트합니다.

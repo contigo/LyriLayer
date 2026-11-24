@@ -23,6 +23,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Require persistent APK signing credentials
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.LYRILAYER_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.LYRILAYER_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$KEYSTORE_B64" || -z "$KEYSTORE_PASSWORD" ]]; then
+            echo "::error::Configure LYRILAYER_KEYSTORE_B64 and LYRILAYER_KEYSTORE_PASSWORD before publishing. See tools/setup-signing.ps1."
+            exit 1
+          fi
       - name: Install Android SDK 36
         shell: bash
         run: |
@@ -41,10 +52,22 @@ jobs:
         run: gradle :app:testDebugUnitTest --stacktrace
       - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace
-      - name: Rename APK
+      - name: Sign APK using persistent key
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.LYRILAYER_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.LYRILAYER_KEYSTORE_PASSWORD }}
         run: |
+          set -euo pipefail
+          umask 077
+          KS="$(mktemp "$RUNNER_TEMP/lyrilayer-signing.XXXXXX")"
+          trap 'rm -f "$KS"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KS"
+          TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/LyriLayer-debug.apk
+          "$TOOLS/apksigner" sign --ks "$KS" --ks-key-alias lyrilayer --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out artifacts/LyriLayer-debug.apk app/build/outputs/apk/debug/app-debug.apk
+          "$TOOLS/apksigner" verify --verbose --print-certs artifacts/LyriLayer-debug.apk
+          "$TOOLS/zipalign" -c -P 16 4 artifacts/LyriLayer-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: LyriLayer-APK
@@ -73,5 +96,5 @@ jobs:
             echo "Tag $TAG exists without a release. Refusing to publish against an unverified tag."
             exit 1
           fi
-          NOTES="$(printf 'Automated Android test release.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- Debug-signed APK; real-device validation pending.\n- Updates require the same APK signing certificate.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$GH_REPO" "$GITHUB_RUN_ID")"
+          NOTES="$(printf 'Automated Android test release.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- Persistent-key-signed debug APK; real-device validation pending.\n- First migration from older ephemeral debug keys may require backup and reinstall; future updates use the same persistent key.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$GH_REPO" "$GITHUB_RUN_ID")"
           gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "LyriLayer $TAG" --notes "$NOTES" --prerelease
