@@ -419,7 +419,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         HorizontalDivider()
-                        Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 LRCLIB에 전송합니다. 음악 파일이나 알림은 전송하지 않습니다.")
+                        Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 지니·벅스 및 보조 검색 서비스 LRCLIB에 전송할 수 있습니다. 음악 파일이나 알림은 전송하지 않습니다.")
                         HorizontalDivider()
                         if(updateSupported){
                             OutlinedButton(onClick={settingsScreen="update"},modifier=Modifier.fillMaxWidth()){

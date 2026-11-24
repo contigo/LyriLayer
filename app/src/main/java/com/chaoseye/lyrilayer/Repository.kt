@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 object Repository {
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build()
     private val gate=Mutex()
-    private const val MISS="LRCLIB-v4"
+    private const val MISS="LyricKit-LRCLIB-v1"
     private fun text(j:JSONObject,k:String)=if(j.isNull(k))"" else j.optString(k)
     private suspend fun request(endpoint:String,params:Map<String,String>):String? {
         currentCoroutineContext().ensureActive()
@@ -42,7 +42,7 @@ object Repository {
         val score=MusicRules.score(id,t.album,t.duration,text(j,"trackName"),a,text(j,"albumName"),seconds,l.synced.isNotBlank())?:return null
         return Candidate(l,score,a,seconds)
     }
-    private suspend fun online(t:Track):Lyric?{
+    private suspend fun legacyOnline(t:Track):Lyric?{
         val ids=MusicRules.identities(t.title,t.artist,t.fileName)
         if(ids.isEmpty())return null
         val candidates=linkedMapOf<String,Candidate>()
@@ -87,6 +87,17 @@ object Repository {
             if(raw!=null)candidate(t,id,JSONObject(raw))?.value?.let{return it}
         }
         error?.let{throw it}
+        return null
+    }
+    private suspend fun online(t:Track):Lyric? {
+        val primary = LyricKitBridge.lookup(t)
+        val candidate = LyricKitBridge.toLyric(t, primary)
+        if (candidate?.synced?.isNotBlank() == true) return candidate
+        val legacy = try { legacyOnline(t) } catch(e: CancellationException) { throw e } catch(e: Exception) { if (candidate != null) return candidate else throw e }
+        if (legacy?.synced?.isNotBlank() == true) return legacy
+        if (candidate != null) return candidate
+        if (legacy != null) return legacy
+        if (primary is com.chaoseye.lyrickit.SearchOutcome.Unavailable) throw IOException("온라인 가사 검색 일부 제공처 오류")
         return null
     }
     data class SearchResult(val id:Long,val title:String,val artist:String,val album:String,val seconds:Double,val plain:String,val synced:String,val instrumental:Boolean)

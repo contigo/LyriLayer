@@ -1,0 +1,2 @@
+# LyricKit (development)
+Direct Kotlin lyric engine. No UI or server. Genie and Bugs are implemented; Musixmatch is not configured and requires authorized access. Based on https://github.com/oneulddu/musicxmatch-api (MIT; see license). Matching is conservative; duration missing may prevent automatic selection. The app keeps its existing LRCLIB fallback and manual search. Live network validation and AI queue integration remain pending.

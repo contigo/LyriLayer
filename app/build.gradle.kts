@@ -35,6 +35,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
+    implementation(project(":lyrickit"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation(platform("androidx.compose:compose-bom:2025.10.00"))
     implementation("androidx.compose.material3:material3")
