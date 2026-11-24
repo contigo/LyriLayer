@@ -1,0 +1,57 @@
+name: Publish LyriLayer v0.1.0 APK
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-v0.1.0.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: lyrilayer-publish-v0.1.0
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_ID: '456536780'
+      TAG: v0.1.0
+      SOURCE_SHA: '823826d757f70d85d28f67a908832031f9521d61'
+    steps:
+      - name: Retrieve the verified successful build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download 45363105614 --name LyriLayer-APK --dir dist
+          test -s dist/LyriLayer-debug.apk
+          unzip -tq dist/LyriLayer-debug.apk
+      - name: Prepare release and attach APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          draft="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .draft)"
+          if [[ "$draft" != true ]]; then
+            echo "Release is already published; refusing to modify it."
+            exit 1
+          fi
+          gh api --method PATCH "repos/$GH_REPO/releases/$RELEASE_ID" \
+            -f tag_name="$TAG" -f target_commitish="$SOURCE_SHA" \
+            -f name="LyriLayer v0.1.0" \
+            -f body="First Android test build. Samsung Music lyrics detection, LRCLIB lookup, local lyrics storage, LRC synchronization and floating lyrics. Debug-signed APK; real-device validation is pending. Built from commit $SOURCE_SHA (Actions run 45363105614)." \
+            -F draft=true -F prerelease=true >/dev/null
+          upload_url="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .upload_url | cut -d '{' -f 1)"
+          existing="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --jq '.[] | select(.name=="LyriLayer-debug.apk") | .id')"
+          if [[ -n "$existing" ]]; then
+            echo "Asset already exists; refusing to overwrite it."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary @dist/LyriLayer-debug.apk \
+            "$upload_url?name=LyriLayer-debug.apk" > asset.json
+          jq -e '.state=="uploaded" and .size>0' asset.json >/dev/null
+          gh api --method PATCH "repos/$GH_REPO/releases/$RELEASE_ID" -F draft=false -F prerelease=true --jq .html_url
