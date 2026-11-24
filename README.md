@@ -62,3 +62,6 @@ Apache License 2.0 (LICENSE).
 - Windows에서 `tools/setup-signing.ps1`을 한 번 실행해 전용 PKCS12 키 및 GitHub Actions Secrets를 등록합니다. 키와 비밀번호는 공개 저장소에 올리지 않습니다.
 - 이후 모든 배포 APK는 동일 키로 재서명하고 apksigner 검증 및 zipalign 확인 후 등록합니다. Secrets 누락 시 빌드를 중단합니다.
 - 기존 임시 debug 키로 설치된 앱은 해당 개인 키를 복구할 수 없다면 데이터 백업 후 1회 재설치가 필요합니다. 이후 동일 키로 업데이트합니다.
+
+### 임시 테스트 배포 (v0.1.8부터)
+고정 서명 Secrets 두 개가 모두 미등록이면 임시 debug 서명 APK를 pre-release로 배포합니다. 서명이 달라 기존 앱 업데이트가 실패할 수 있습니다. 두 Secrets를 모두 등록하면 자동으로 고정 서명을 사용하며, 하나만 등록한 경우 빌드를 중단합니다.
