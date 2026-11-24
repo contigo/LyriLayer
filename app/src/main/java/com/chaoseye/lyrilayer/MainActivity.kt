@@ -27,7 +27,10 @@ import androidx.work.WorkInfo
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import kotlinx.coroutines.*
 
 class MainActivity : ComponentActivity() {
@@ -47,6 +50,12 @@ class MainActivity : ComponentActivity() {
         val map=remember(stored) { stored.associateBy { it.key } }
         var tracks by remember { mutableStateOf(emptyList<Track>()) }
         var message by remember { mutableStateOf("") }
+        var messageStatus by remember { mutableStateOf("IDLE") }
+        val successColor=if(androidx.compose.foundation.isSystemInDarkTheme()) Color(0xFF81C784) else Color(0xFF1B5E20)
+        val failureColor=MaterialTheme.colorScheme.error
+        val neutralColor=MaterialTheme.colorScheme.onSurfaceVariant
+        val runningColor=MaterialTheme.colorScheme.primary
+        fun resultColor(status:String):Color=when(status){"FOUND","INSTRUMENTAL"->successColor;"NOT_FOUND","ERROR"->failureColor;"RUNNING"->runningColor;else->neutralColor}
         var query by remember { mutableStateOf("") }
         var page by remember { mutableIntStateOf(0) }
         var edit by remember { mutableStateOf<Track?>(null) }
@@ -70,7 +79,12 @@ class MainActivity : ComponentActivity() {
                 when(page) {
                     0 -> {
                         val found=tracks.count { map[it.key]?.status=="FOUND" || map[it.key]?.status=="INSTRUMENTAL" }
-                        Text("전체 ${tracks.size}곡 · 등록 $found · 미등록 ${tracks.size-found}",fontSize=18.sp)
+                        Text(buildAnnotatedString {
+                            append("전체 ${tracks.size}곡 · ")
+                            withStyle(SpanStyle(color=successColor)){append("등록 $found")}
+                            append(" · ")
+                            withStyle(SpanStyle(color=neutralColor)){append("미등록 ${tracks.size-found}")}
+                        },fontSize=18.sp)
                         Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                         if(!allowed) Button(onClick={permission.launch(audioPermission)}) { Text("음악 파일 접근 허용") }
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -89,11 +103,17 @@ class MainActivity : ComponentActivity() {
                                 Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
                                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
                                         Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기 / 이어서 처리"},style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
-                                        Text("$percent%",style=MaterialTheme.typography.headlineSmall,fontSize=26.sp,color=MaterialTheme.colorScheme.primary)
+                                        Text("$percent%",style=MaterialTheme.typography.headlineSmall,fontSize=26.sp,color=when(job.state){WorkInfo.State.SUCCEEDED->successColor;WorkInfo.State.FAILED->failureColor;WorkInfo.State.CANCELLED->neutralColor;else->runningColor})
                                     }
                                     LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth().height(8.dp))
                                     Text("처리 $done / $total 곡 · 남은 곡 ${(total-done).coerceAtLeast(0)}",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
-                                    Text("성공 ${data.getInt("found",0)} · 없음 ${data.getInt("missing",0)} · 오류 ${data.getInt("errors",0)}",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
+                                    Text(buildAnnotatedString {
+                                        withStyle(SpanStyle(color=successColor)){append("성공 ${data.getInt("found",0)}")}
+                                        append(" · ")
+                                        withStyle(SpanStyle(color=failureColor)){append("없음 ${data.getInt("missing",0)}")}
+                                        append(" · ")
+                                        withStyle(SpanStyle(color=failureColor)){append("오류 ${data.getInt("errors",0)}")}
+                                    },style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                                     data.getString("current")?.takeIf{it.isNotBlank()&&!job.state.isFinished}?.let{Text("검색 중: $it",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
                                     data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
                                     if(!job.state.isFinished) TextButton(onClick={work.cancelUniqueWork(BatchWorker.NAME)}){Text("수집 중단",fontSize=16.sp)}
@@ -101,10 +121,13 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         OutlinedTextField(query,{query=it},label={Text("곡 제목 / 가수 검색")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-                        Text(message)
+                        Text(message,color=resultColor(messageStatus))
                         LazyColumn(Modifier.weight(1f)) { items(tracks.filter { it.title.contains(query,true) || it.artist.contains(query,true) }) { t ->
                             val l=map[t.key]
-                            ListItem(headlineContent={Text(t.title)},supportingContent={Text("${t.artist} · ${when { l?.status=="INSTRUMENTAL" -> "연주곡"; !l?.synced.isNullOrBlank() -> "싱크 가사"; l?.status=="FOUND" -> "일반 가사"; l?.status=="NOT_FOUND" -> "검색 실패"; else -> "미등록" }}")},trailingContent={Row { TextButton(onClick={manualSearch=t}) { Text("직접") }; TextButton(onClick={edit=t}) { Text("편집") }; TextButton(onClick={scope.launch { message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); message="${t.title}: ${when { result.status=="INSTRUMENTAL" -> "연주곡"; result.synced.isNotBlank() -> "싱크 가사 저장 완료"; result.status=="FOUND" -> "일반 가사 저장 완료"; else -> "가사 없음 · 편집에서 Google 검색 가능" }}" } catch(e: CancellationException){throw e} catch(e: Exception){message="검색 오류: ${e.message}"} }}) { Text("검색") } }})
+                            ListItem(headlineContent={Text(t.title)},supportingContent={Text(buildAnnotatedString {
+                                append(t.artist);append(" · ")
+                                withStyle(SpanStyle(color=resultColor(l?.status.orEmpty()))){append(when { l?.status=="INSTRUMENTAL" -> "연주곡"; !l?.synced.isNullOrBlank() -> "싱크 가사"; l?.status=="FOUND" -> "일반 가사"; l?.status=="NOT_FOUND" -> "검색 실패"; else -> "미등록" })}
+                            })},trailingContent={Row { TextButton(onClick={manualSearch=t}) { Text("직접") }; TextButton(onClick={edit=t}) { Text("편집") }; TextButton(onClick={scope.launch { messageStatus="RUNNING"; message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); messageStatus=result.status; message="${t.title}: ${when { result.status=="INSTRUMENTAL" -> "연주곡"; result.synced.isNotBlank() -> "싱크 가사 저장 완료"; result.status=="FOUND" -> "일반 가사 저장 완료"; else -> "가사 없음 · 편집에서 Google 검색 가능" }}" } catch(e: CancellationException){throw e} catch(e: Exception){messageStatus="ERROR";message="검색 오류: ${e.message}"} }}) { Text("검색") } }})
                             HorizontalDivider()
                         } }
                     }
@@ -146,6 +169,7 @@ class MainActivity : ComponentActivity() {
             var term by remember(t){mutableStateOf(listOf(MusicRules.clean(t.artist),MusicRules.title(t.title)).filter{it.isNotBlank()}.joinToString(" "))}
             var results by remember(t){mutableStateOf(emptyList<Repository.SearchResult>())}
             var status by remember(t){mutableStateOf("제목과 가수를 수정해 검색할 수 있습니다.")}
+            var searchStatus by remember(t){mutableStateOf("IDLE")}
             var busy by remember(t){mutableStateOf(false)}
             val searchScope=rememberCoroutineScope()
             AlertDialog(onDismissRequest={manualSearch=null},title={Text("가사 직접 검색")},text={
@@ -153,20 +177,20 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(term,{term=it},label={Text("제목 / 가수")},singleLine=true)
                     Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){
                         Button(enabled=!busy&&term.isNotBlank(),onClick={searchScope.launch{
-                            busy=true;status="LRCLIB 검색 중";results=emptyList()
-                            try{results=Repository.searchCandidates(term);status=if(results.isEmpty())"검색 결과 없음" else "곡과 재생 시간을 확인해 선택하세요."}
-                            catch(e:CancellationException){throw e}catch(e:Exception){status="검색 오류: ${e.message}"}
+                            busy=true;searchStatus="RUNNING";status="LRCLIB 검색 중";results=emptyList()
+                            try{results=Repository.searchCandidates(term);searchStatus=if(results.isEmpty())"NOT_FOUND" else "FOUND";status=if(results.isEmpty())"검색 결과 없음" else "곡과 재생 시간을 확인해 선택하세요."}
+                            catch(e:CancellationException){throw e}catch(e:Exception){searchStatus="ERROR";status="검색 오류: ${e.message}"}
                             finally{busy=false}
                         }}){Text("LRCLIB 검색")}
                         OutlinedButton(onClick={startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/search?q="+Uri.encode(term+" 가사 lyrics"))))}){Text("Google")}
                     }
                     if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text(status)
+                    Text(status,color=resultColor(searchStatus))
                     Text("내 음원: ${t.duration/1000}초 · 선택한 가사는 자동으로 덮어쓰지 않습니다.",style=MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick={manualSearch=null;aiTrack=t}){Text("기기에서 AI 가사 추출")}
                     OutlinedButton(onClick={manualSearch=null;edit=t}){Text("내장 가사 / LRC 가져오기") }
                     results.forEach{r->
-                        ListItem(headlineContent={Text(r.title)},supportingContent={Text("${r.artist} · ${r.album} · ${r.seconds.toInt()}초 · ${if(r.synced.isNotBlank())"싱크" else "일반"}")},trailingContent={TextButton(onClick={scope.launch{Repository.selectCandidate(this@MainActivity,t,r);message="선택한 가사 저장 완료";manualSearch=null}}){Text("저장")}})
+                        ListItem(headlineContent={Text(r.title)},supportingContent={Text("${r.artist} · ${r.album} · ${r.seconds.toInt()}초 · ${if(r.synced.isNotBlank())"싱크" else "일반"}")},trailingContent={TextButton(onClick={scope.launch{Repository.selectCandidate(this@MainActivity,t,r);messageStatus="FOUND";message="선택한 가사 저장 완료";manualSearch=null}}){Text("저장")}})
                         HorizontalDivider()
                     }
                 }
@@ -204,7 +228,7 @@ class MainActivity : ComponentActivity() {
                     if(result.isNotBlank())OutlinedTextField(result,{result=it},label={Text("AI 생성 LRC · 검토 및 수정")},modifier=Modifier.fillMaxWidth().heightIn(min=180.dp,max=300.dp))
                 }
             },confirmButton={TextButton(enabled=!running&&Lrc.parse(result).isNotEmpty(),onClick={scope.launch{
-                db.dao().put(Lyric(t.key,Lrc.parse(result).joinToString("\n"){it.text},result,"ON_DEVICE_AI","FOUND",edited=true));message="AI 가사 저장 완료";aiTrack=null
+                db.dao().put(Lyric(t.key,Lrc.parse(result).joinToString("\n"){it.text},result,"ON_DEVICE_AI","FOUND",edited=true));messageStatus="FOUND";message="AI 가사 저장 완료";aiTrack=null
             }}){Text("확인 후 저장")}},dismissButton={TextButton(onClick={if(running){task?.cancel();status="현재 분석 구간 종료 후 중단합니다."}else aiTrack=null}){Text(if(running)"분석 중단" else "닫기")}})
         }
         edit?.let { t ->
