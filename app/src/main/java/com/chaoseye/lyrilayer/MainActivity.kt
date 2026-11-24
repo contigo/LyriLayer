@@ -4,6 +4,8 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.content.Intent
+import android.content.ComponentName
+import android.service.notification.NotificationListenerService
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
@@ -67,11 +69,20 @@ class MainActivity : ComponentActivity() {
         var modelMessage by remember { mutableStateOf("") }
         val scope=rememberCoroutineScope()
         val now by Playback.now.collectAsStateWithLifecycle()
+        val listenerConnected by Playback.connected.collectAsStateWithLifecycle()
+        val listenerComponent=remember { ComponentName(this,MusicListener::class.java) }
+        val listenerAllowed=remember(tick) { Settings.Secure.getString(contentResolver,"enabled_notification_listeners").orEmpty().split(":").any { ComponentName.unflattenFromString(it)==listenerComponent } }
+        val overlayAllowed=remember(tick) { Settings.canDrawOverlays(this) }
+        LaunchedEffect(tick,allowed,listenerAllowed) {
+            if(listenerAllowed&&!Playback.connected.value) NotificationListenerService.requestRebind(listenerComponent)
+            if(allowed&&listenerAllowed) Playback.retry.value++
+        }
         val work=remember { WorkManager.getInstance(this) }
         val jobs by remember { work.getWorkInfosForUniqueWorkFlow(BatchWorker.NAME) }.collectAsStateWithLifecycle(initialValue=emptyList())
         val job=jobs.firstOrNull { !it.state.isFinished } ?: jobs.firstOrNull()
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
+        var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
         Scaffold(bottomBar={ NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -135,6 +146,8 @@ class MainActivity : ComponentActivity() {
                         Text(now.track?.title ?: "재생 중인 음악 없음",style=MaterialTheme.typography.titleLarge)
                         Text(now.track?.artist.orEmpty())
                         Text(if(now.playing) "Samsung Music 재생 중" else "재생 대기 / 일시 정지")
+                        Text(if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"음악 감지 서비스 연결 대기" else now.overlayStatus, fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
+                        TextButton(onClick={if(listenerAllowed)NotificationListenerService.requestRebind(listenerComponent);Playback.retry.value++}){Text("삼성 뮤직 다시 연결 / 가사 확인")}
                         val lines=remember(now.lyric?.synced) { Lrc.parse(now.lyric?.synced.orEmpty()) }
                         if(lines.isNotEmpty()) {
                             val list=rememberLazyListState()
@@ -149,6 +162,20 @@ class MainActivity : ComponentActivity() {
                         Button(onClick={startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))}) { Text("다른 앱 위에 표시 권한") }
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply()}) }
                         Text("싱크 가사가 있는 곡을 재생할 때만 오버레이를 표시합니다.")
+                        HorizontalDivider()
+                        Text("플로팅 실행 테스트",style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Text("테스트 모드",Modifier.weight(1f),fontSize=16.sp)
+                            Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it&&listenerAllowed&&!Playback.connected.value)NotificationListenerService.requestRebind(listenerComponent)})
+                        }
+                        Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 테스트 문구를 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
+                        Text("알림 접근: "+if(listenerAllowed)"허용됨" else "권한 필요",color=if(listenerAllowed)successColor else failureColor,fontSize=14.sp)
+                        Text("음악 감지 서비스: "+if(listenerConnected)"연결됨" else "연결 대기",color=if(listenerConnected)successColor else neutralColor,fontSize=14.sp)
+                        Text("다른 앱 위에 표시: "+if(overlayAllowed)"허용됨" else "권한 필요",color=if(overlayAllowed)successColor else failureColor,fontSize=14.sp)
+                        Text("재생 감지: "+if(now.playing)"재생 중" else "재생 대기",color=if(now.playing)successColor else neutralColor,fontSize=14.sp)
+                        Text("플로팅 상태: "+if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"서비스 연결 대기" else now.overlayStatus,fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
+                        OutlinedButton(onClick={if(listenerAllowed)NotificationListenerService.requestRebind(listenerComponent);Playback.retry.value++}){Text("음악 감지 다시 연결")}
+                        HorizontalDivider()
                         Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 LRCLIB에 전송합니다. 음악 파일이나 알림은 전송하지 않습니다.")
                         HorizontalDivider()
                         Text("온디바이스 AI 가사",style=MaterialTheme.typography.titleLarge)
