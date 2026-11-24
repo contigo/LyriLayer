@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
         var settingsScreen by rememberSaveable { mutableStateOf("main") }
         BackHandler(enabled=page==2&&settingsScreen!="main"){settingsScreen="main"}
         var edit by remember { mutableStateOf<Track?>(null) }
+        var syncTrack by remember { mutableStateOf<Track?>(null) }
         var manualSearch by remember { mutableStateOf<Track?>(null) }
         var aiTrack by remember { mutableStateOf<Track?>(null) }
         var aiTarget by remember { mutableStateOf<Track?>(null) }
@@ -115,6 +116,7 @@ class MainActivity : ComponentActivity() {
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
         var showMissingOverlay by remember { mutableStateOf(prefs.getBoolean(OverlayContent.SHOW_MISSING,true)) }
+        var plainMode by remember { mutableStateOf(prefs.getString(PlainSync.MODE_KEY,PlainSync.ESTIMATE)?:PlainSync.ESTIMATE) }
         var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
         var overlayPosition by remember { mutableIntStateOf(OverlayPosition.normalize(prefs.getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))) }
         fun saveOverlayPosition(value:Int){
@@ -276,7 +278,7 @@ class MainActivity : ComponentActivity() {
                         LazyColumn(Modifier.weight(1f)) { items(visibleTracks) { t ->
                             val l=map[t.key]
                             val activeAi=aiTarget?.key==t.key
-                            val generated=LyricDisplay.aiGenerated(l?.status,l?.source)
+                            val generated=LyricDisplay.aiGenerated(l?.status,l?.source)||l?.source==PlainSync.AI_SOURCE
                             val rowLabel=when{
                                 activeAi&&aiRunning -> "✦ AI 분석 중 · $aiProgress%"
                                 activeAi&&aiFailed -> "AI 분석 실패 / 중단"
@@ -287,6 +289,7 @@ class MainActivity : ComponentActivity() {
                             ListItem(headlineContent={Text(t.title)},supportingContent={
                                 Column(verticalArrangement=Arrangement.spacedBy(3.dp)){
                                     Text(buildAnnotatedString{append(t.artist);append(" · ");withStyle(SpanStyle(color=rowColor)){append(rowLabel)}})
+                                    if(l?.status=="FOUND"&&(!l.plain.isBlank()||l.synced.isNotBlank()))TextButton(onClick={syncTrack=t},contentPadding=PaddingValues(0.dp)){Text("가사 관리 / 싱크",fontSize=13.sp)}
                                     if(activeAi&&aiRunning)LinearProgressIndicator(progress={aiProgress/100f},modifier=Modifier.fillMaxWidth(),color=aiColor)
                                     if(!LyricDisplay.registered(l?.status)||activeAi)TextButton(onClick={openAi(t)},contentPadding=PaddingValues(0.dp)){Text(if(activeAi)"AI 분석 열기" else "✦ AI 가사 분석",color=aiColor,fontSize=13.sp)}
                                 }
@@ -306,7 +309,18 @@ class MainActivity : ComponentActivity() {
                             val list=rememberLazyListState()
                             LaunchedEffect(now.index,lines) { if(now.index>=0) list.animateScrollToItem((now.index-2).coerceAtLeast(0)) }
                             LazyColumn(state=list,modifier=Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(18.dp)) { items(lines.size) { i -> Text(lines[i].text,style=if(i==now.index) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge,color=if(i==now.index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
-                        } else if(!now.lyric?.plain.isNullOrBlank()) LazyColumn(Modifier.weight(1f)) { item { Text("일반 가사 · 시간 정보 없음"); Text(now.lyric?.plain.orEmpty()) } } else Text(now.message)
+                        } else if(!now.lyric?.plain.isNullOrBlank()){
+                            val plain=now.lyric?.plain.orEmpty()
+                            val rows=remember(plain){PlainSync.rows(plain)}
+                            val estimates=remember(plain,now.track?.duration){PlainSync.estimated(plain,now.track?.duration?:0)}
+                            val idx=Lrc.index(estimates,now.position)
+                            val list=rememberLazyListState()
+                            LaunchedEffect(idx,plainMode){if(plainMode==PlainSync.ESTIMATE&&idx>=0)list.animateScrollToItem((idx-1).coerceAtLeast(0))}
+                            Text(if(plainMode==PlainSync.ESTIMATE)"일반 가사 · 추정 싱크" else "일반 가사 · 시간 정보 없음")
+                            LazyColumn(state=list,modifier=Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)){
+                                items(rows.size){i->Text(rows[i],color=if(plainMode==PlainSync.ESTIMATE&&i==idx)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)}
+                            }
+                        } else Text(now.message)
                     }
                     else -> {
                         Text("삼성 뮤직 연결",style=MaterialTheme.typography.titleLarge)
@@ -327,6 +341,13 @@ class MainActivity : ComponentActivity() {
                             Switch(showMissingOverlay,{showMissingOverlay=it;prefs.edit().putBoolean(OverlayContent.SHOW_MISSING,it).apply()})
                         }
                         HorizontalDivider()
+                        Text("일반 가사 플로팅 방식",fontSize=16.sp)
+                        listOf(PlainSync.ESTIMATE to "자동 스크롤 (추정)",PlainSync.STATIC to "일반 가사 고정 표시",PlainSync.OFF to "곡 정보만 표시").forEach{(key,label)->
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                RadioButton(selected=plainMode==key,onClick={plainMode=key;prefs.edit().putString(PlainSync.MODE_KEY,key).apply()})
+                                Text(label,fontSize=14.sp)
+                            }
+                        }
                         OutlinedButton(onClick={settingsScreen="position"},modifier=Modifier.fillMaxWidth()){
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                                 Column(Modifier.weight(1f)){
@@ -486,6 +507,10 @@ class MainActivity : ComponentActivity() {
                     TextButton(enabled=!aiSaving,onClick={if(aiRunning)aiTrack=null else clearAi()}){Text(if(aiRunning)"목록 보기" else "닫기")}
                 }
             })
+        }
+        syncTrack?.let{t->
+            val lyric=map[t.key]
+            if(lyric!=null)SyncManager(this@MainActivity,t,lyric,now,modelReady,onSaved={syncTrack=null;message="싱크 가사 저장 완료";messageStatus="FOUND"},onClose={syncTrack=null})
         }
         edit?.let { t ->
             val old=map[t.key]

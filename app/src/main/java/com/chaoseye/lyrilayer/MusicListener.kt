@@ -27,7 +27,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 
-data class NowPlaying(val track: Track? = null, val playing: Boolean = false, val position: Long = 0, val lyric: Lyric? = null, val index: Int = -1, val message: String = "삼성 뮤직 재생 대기", val overlayStatus: String = "삼성 뮤직 재생 대기")
+data class NowPlaying(val track: Track? = null, val playing: Boolean = false, val position: Long = 0, val lyric: Lyric? = null, val index: Int = -1, val message: String = "삼성 뮤직 재생 대기", val overlayStatus: String = "삼성 뮤직 재생 대기", val libraryKey:String?=null)
 object Playback { val now = MutableStateFlow(NowPlaying()); val connected = MutableStateFlow(false); val retry = MutableStateFlow(0L) }
 class MusicListener : NotificationListenerService() {
     private val scope = CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
@@ -42,6 +42,8 @@ class MusicListener : NotificationListenerService() {
     private var resolvedKey:String?=null
     private var excludedTrack=false
     private var searching=false
+    private var estimatedLines=emptyList<Line>()
+    private var plainSnippet=""
     private var overlayFailure = ""
     private var overlayFailureAt = 0L
     private val wm get() = getSystemService(WindowManager::class.java)
@@ -97,7 +99,7 @@ class MusicListener : NotificationListenerService() {
                 val track=Track(title,m?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty(),m?.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty(),m?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0)
                 if(activeKey!=track.key||lastRetry!=Playback.retry.value) {
                     lastRetry=Playback.retry.value
-                    fetch?.cancel();activeKey=track.key;resolvedKey=null;lyric=null;lines=emptyList()
+                    fetch?.cancel();activeKey=track.key;resolvedKey=null;lyric=null;lines=emptyList();estimatedLines=emptyList();plainSnippet=""
                     excludedTrack=MusicRules.excluded("", "",track.title);searching=!excludedTrack
                     error=if(excludedTrack)"녹음 및 기타 오디오는 제외됩니다" else "가사 검색 중"
                     fetch=scope.launch {
@@ -109,7 +111,7 @@ class MusicListener : NotificationListenerService() {
                             if(actual.excluded){excludedTrack=true;searching=false;error="녹음 및 기타 오디오는 제외됩니다";return@launch}
                             val dao=LyricsDb.get(this@MusicListener).dao()
                             fun apply(l: Lyric?) {
-                                lyric=l;lines=Lrc.parse(l?.synced.orEmpty())
+                                lyric=l;lines=Lrc.parse(l?.synced.orEmpty());estimatedLines=if(lines.isEmpty())PlainSync.estimated(l?.plain.orEmpty(),actual.duration) else emptyList();plainSnippet=PlainSync.static(l?.plain.orEmpty())
                                 error=when { l==null -> "가사 검색 중"; l.status=="NOT_FOUND" -> "가사를 찾지 못했습니다"; l.status=="INSTRUMENTAL" -> "연주곡"; lines.isEmpty()&&l.plain.isNotBlank() -> "일반 가사 · 시간 정보 없음"; else -> "" }
                             }
                             val cached=dao.get(actual.key)
@@ -149,14 +151,23 @@ class MusicListener : NotificationListenerService() {
                 }
                 val analysis=DeviceLyrics.activeAnalysis.value
                 val aiPercent=analysis?.takeIf{it.trackKey==(resolvedKey?:track.key)}?.percent
-                val content=OverlayContent.decide(enabled,playing,permission,interactive,excludedTrack,
+                val baseContent=OverlayContent.decide(enabled,playing,permission,interactive,excludedTrack,
                     prefs.getBoolean(OverlayContent.SHOW_MISSING,true),track.title,track.artist,
                     lines.getOrNull(index)?.text,lines.isNotEmpty(),lyric?.status,searching,reason,aiPercent)
+                val plainMode=prefs.getString(PlainSync.MODE_KEY,PlainSync.ESTIMATE)
+                val estimated=estimatedLines.getOrNull(Lrc.index(estimatedLines,position))
+                val content=if(enabled&&playing&&permission&&interactive&&!excludedTrack&&lines.isEmpty()&&lyric?.status=="FOUND"&&aiPercent==null&&plainSnippet.isNotBlank()){
+                    when(plainMode){
+                        PlainSync.ESTIMATE -> estimated?.let{FloatingContent(it.text,"일반 가사 · 추정 싱크","neutral")}?:FloatingContent(plainSnippet,"일반 가사 · 시간 정보 없음","neutral")
+                        PlainSync.STATIC -> FloatingContent(plainSnippet,"일반 가사 · 시간 정보 없음","neutral")
+                        else -> baseContent
+                    }
+                }else baseContent
                 val status=if(content!=null){
                     if(show(content))if(content.detail.isEmpty())"플로팅 가사 표시 중" else "곡 정보 플로팅 표시 중"
                     else overlayFailure.ifBlank{"오버레이 표시 실패"}
                 }else{hide();reason}
-                Playback.now.value=NowPlaying(track,playing,position,lyric,index,error,status)
+                Playback.now.value=NowPlaying(track,playing,position,lyric,index,error,status,resolvedKey)
                 delay(150)
             }
         }
