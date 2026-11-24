@@ -2,9 +2,17 @@ package com.chaoseye.lyrilayer
 import java.text.Normalizer
 import java.util.Locale
 object MusicRules {
-    private val folders=setOf("call","calls","recordings","voice recorder","voicerecorder","call recordings","call recording","callrecordings","callrecording","통화 녹음","통화녹음","음성 녹음","음성녹음","ringtones","alarms","notifications")
+    private val folders=setOf("call","calls","recordings","tphonecallrecords","tphone call records","tphonecallrecord","voice recorder","voicerecorder","call recordings","call recording","callrecordings","callrecording","통화 녹음","통화녹음","음성 녹음","음성녹음","ringtones","alarms","notifications")
     private val recording=Regex("^(?:통화\\s*녹음|음성\\s*녹음|call[ _-]*(?:recording|record)|voice[ _-]*(?:recording|record))(?=\\s|_|-|\\d|\\.|$)",RegexOption.IGNORE_CASE)
-    fun excluded(path:String,name:String,title:String="",flag:Boolean=false):Boolean = flag || path.replace('\\','/').split('/').any { it.trim().lowercase(Locale.ROOT) in folders } || recording.containsMatchIn(name.trim()) || recording.containsMatchIn(title.trim())
+    // TPhone uses [contact_]phone_yyyyMMddHHmmss.m4a. Never store or log the filename.
+    private val tphone=Regex("^(?:.+_)?\\+?\\d{3,15}_20\\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01])(?:[01]\\d|2[0-3])[0-5]\\d[0-5]\\d(?:\\.m4a)?$",RegexOption.IGNORE_CASE)
+    private fun recordingName(s:String):Boolean {
+        val v=Normalizer.normalize(s,Normalizer.Form.NFKC).trim()
+        return recording.containsMatchIn(v) || tphone.matches(v)
+    }
+    fun excluded(path:String,name:String,title:String="",flag:Boolean=false):Boolean =
+        flag || path.replace('\\','/').split('/').any { it.trim().lowercase(Locale.ROOT) in folders } ||
+            recordingName(name) || recordingName(title)
     fun clean(s:String)=Normalizer.normalize(s,Normalizer.Form.NFKC).trim().replace(Regex("\\s+")," ").takeUnless { it.equals("<unknown>",true)||it.equals("unknown",true)||it=="알 수 없음" }.orEmpty()
     fun norm(s:String)=clean(s).lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]"),"")
     fun title(s:String)=clean(s).replace(Regex("\\.(mp3|flac|m4a|wav|ogg|aac|opus|wma|ape)$",RegexOption.IGNORE_CASE),"").replace(Regex("^\\d{1,3}[. _-]+"),"").trim()

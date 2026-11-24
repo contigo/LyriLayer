@@ -38,17 +38,24 @@ object Library {
         val folder=if(Build.VERSION.SDK_INT>=29) "relative_path" else "_data"
         val columns=mutableListOf("_id","title","artist","album","duration","_display_name",folder,"is_music","is_alarm","is_notification","is_ringtone")
         if(Build.VERSION.SDK_INT>=31)columns.add("is_recording")
+        if(Build.VERSION.SDK_INT>=29)columns.add("_data")
         fun query(projection:List<String>):List<Track> = buildList {
             c.contentResolver.query(uri,projection.toTypedArray(),null,null,"title COLLATE NOCASE ASC")?.use { r ->
                 while(r.moveToNext()){
                     val title=r.getString(1).orEmpty(); val name=r.getString(5).orEmpty()
-                    val path=r.getString(6).orEmpty().let{if(Build.VERSION.SDK_INT>=29)it else it.substringBeforeLast('/',"")}
-                    val flagged=(projection.size>11&&r.getInt(11)!=0)||r.getInt(8)!=0||r.getInt(9)!=0||r.getInt(10)!=0
-                    val excluded=MusicRules.excluded(path,name,title,flagged)||r.getInt(7)==0
+                    val relative=r.getString(6).orEmpty()
+                    val dataIndex=r.getColumnIndex("_data")
+                    val absolute=if(dataIndex>=0)r.getString(dataIndex).orEmpty().substringBeforeLast('/',"") else ""
+                    val path=if(Build.VERSION.SDK_INT>=29)relative else absolute
+                    val flagged=(r.getColumnIndex("is_recording").let{it>=0&&r.getInt(it)!=0})||r.getInt(8)!=0||r.getInt(9)!=0||r.getInt(10)!=0
+                    val excluded=MusicRules.excluded(path,name,title,flagged)||MusicRules.excluded(absolute,"")||r.getInt(7)==0
                     add(Track(title,r.getString(2).orEmpty(),r.getString(3).orEmpty(),r.getLong(4),ContentUris.withAppendedId(uri,r.getLong(0)).toString(),name,excluded))
                 }
             }
         }
-        return try { query(columns) } catch(e:IllegalArgumentException){ if(columns.remove("is_recording"))query(columns) else throw e }
+        return try { query(columns) } catch(e:IllegalArgumentException){
+            if(Build.VERSION.SDK_INT>=29)columns.remove("_data")
+            try { query(columns) } catch(second:IllegalArgumentException){ if(columns.remove("is_recording"))query(columns) else throw second }
+        }
     }
 }
