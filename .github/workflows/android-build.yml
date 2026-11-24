@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: '8.13'
       - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --stacktrace
+        run: gradle :lyrickit:testDebugUnitTest :app:testDebugUnitTest --stacktrace
       - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace
       - name: Build unsigned production AAB (Play upload key required before submission)
