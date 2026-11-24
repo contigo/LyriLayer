@@ -1,35 +1,46 @@
-# Gradle files
+# LyriLayer — Android Studio / Kotlin / Gradle
 .gradle/
-build/
 .kotlin/
-
-# Local configuration file (sdk path, etc)
+**/build/
+out/
 local.properties
-
-# Log/OS Files
-*.log
-
-# Android Studio generated files and folders
+.idea/
+*.iml
+*.ipr
+*.iws
 captures/
 .externalNativeBuild/
 .cxx/
-*.aab
+.navigation/
+
+# Generated Android packages and reports
 *.apk
+*.aab
+*.apks
 output-metadata.json
+*.hprof
+*.log
+artifacts/
 
-# IntelliJ
-*.iml
-.idea/
-misc.xml
-deploymentTargetDropDown.xml
-render.experimental.xml
-
-# Keystore files
+# Signing keys and credentials — never commit
 *.jks
 *.keystore
-
-# Google Services (e.g. APIs or Firebase)
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+signing.properties
+secrets.properties
 google-services.json
+.env
+.env.*
+!.env.example
 
-# Android Profiling
-*.hprof
+# Local OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Keep Gradle wrapper source and CI configuration versioned
+!gradle/wrapper/gradle-wrapper.jar
