@@ -1,4 +1,4 @@
-# LyriLayer 0.1.0
+# LyriLayer 0.1.1
 
 삼성 뮤직 전용 읽기 전용 가사 도우미. 재생/정지/탐색 등 음악 제어 없음.
 
@@ -34,3 +34,7 @@ GitHub Actions의 LyriLayer APK Build 워크플로에서 빌드 결과를 확인
 
 ## License
 Apache License 2.0 (LICENSE).
+
+## v0.1.1
+- 삼성 통화/음성 녹음 및 알림음 제외, 원본 파일 변경 없음.
+- LRCLIB 정확 검색 + 제목/가수/키워드/파일명 대체 검색, 후보 검증, 실패 캐시 갱신 및 오류 표시.

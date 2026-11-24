@@ -2,12 +2,13 @@ package com.chaoseye.lyrilayer
 
 import android.content.Context
 import android.provider.MediaStore
+import android.os.Build
 import android.content.ContentUris
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 import java.util.Locale
 
-data class Track(val title: String, val artist: String, val album: String, val duration: Long, val uri: String = "") {
+data class Track(val title: String, val artist: String, val album: String, val duration: Long, val uri: String = "", val fileName: String = "", val excluded: Boolean = false) {
     val key: String get() = listOf(title, artist, album, duration.toString()).joinToString("\u001f") { it.trim().lowercase(Locale.ROOT) }
 }
 @Entity(tableName = "lyrics")
@@ -31,13 +32,23 @@ abstract class LyricsDb : RoomDatabase() {
     }
 }
 object Library {
-    fun scan(c: Context): List<Track> {
-        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val columns = arrayOf("_id", "title", "artist", "album", "duration")
-        return buildList {
-            c.contentResolver.query(uri, columns, "is_music != 0", null, "title COLLATE NOCASE ASC")?.use { r ->
-                while (r.moveToNext()) add(Track(r.getString(1).orEmpty(), r.getString(2).orEmpty(), r.getString(3).orEmpty(), r.getLong(4), ContentUris.withAppendedId(uri,r.getLong(0)).toString()))
+    fun scan(c:Context):List<Track> = allAudio(c).filterNot { it.excluded }
+    fun allAudio(c:Context):List<Track> {
+        val uri=MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val folder=if(Build.VERSION.SDK_INT>=29) "relative_path" else "_data"
+        val columns=mutableListOf("_id","title","artist","album","duration","_display_name",folder,"is_music","is_alarm","is_notification","is_ringtone")
+        if(Build.VERSION.SDK_INT>=31)columns.add("is_recording")
+        fun query(projection:List<String>):List<Track> = buildList {
+            c.contentResolver.query(uri,projection.toTypedArray(),null,null,"title COLLATE NOCASE ASC")?.use { r ->
+                while(r.moveToNext()){
+                    val title=r.getString(1).orEmpty(); val name=r.getString(5).orEmpty()
+                    val path=r.getString(6).orEmpty().let{if(Build.VERSION.SDK_INT>=29)it else it.substringBeforeLast('/',"")}
+                    val flagged=(projection.size>11&&r.getInt(11)!=0)||r.getInt(8)!=0||r.getInt(9)!=0||r.getInt(10)!=0
+                    val excluded=MusicRules.excluded(path,name,title,flagged)||r.getInt(7)==0
+                    add(Track(title,r.getString(2).orEmpty(),r.getString(3).orEmpty(),r.getLong(4),ContentUris.withAppendedId(uri,r.getLong(0)).toString(),name,excluded))
+                }
             }
         }
+        return try { query(columns) } catch(e:IllegalArgumentException){ if(columns.remove("is_recording"))query(columns) else throw e }
     }
 }

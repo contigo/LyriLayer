@@ -1,5 +1,4 @@
 package com.chaoseye.lyrilayer
-
 import android.content.Context
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -8,38 +7,97 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-
 object Repository {
-    private val client = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
-    private val gate = Mutex()
-    suspend fun resolve(c: Context, t: Track, force: Boolean = false): Lyric = gate.withLock {
-        withContext(Dispatchers.IO) {
-            val dao=LyricsDb.get(c).dao()
-            val old=dao.get(t.key)
-            if(old != null && (old.edited || (!force && (old.status == "FOUND" || old.status == "INSTRUMENTAL" || System.currentTimeMillis()-old.fetched < 86400000)))) return@withContext old
-            val url="https://lrclib.net/api/get".toHttpUrl().newBuilder().addQueryParameter("track_name",t.title).addQueryParameter("artist_name",t.artist).apply {
-                if(t.album.isNotBlank()) addQueryParameter("album_name",t.album)
-                if(t.duration>0) addQueryParameter("duration",((t.duration+500)/1000).toString())
-            }.build()
-            val result=client.newCall(Request.Builder().url(url).header("User-Agent","LyriLayer/0.1.0 (Android)").build()).execute().use { r ->
+    private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build()
+    private val gate=Mutex()
+    private const val MISS="LRCLIB-v2"
+    private fun text(j:JSONObject,k:String)=if(j.isNull(k))"" else j.optString(k)
+    private suspend fun request(endpoint:String,params:Map<String,String>):String? {
+        currentCoroutineContext().ensureActive()
+        val url=("https://lrclib.net/api/"+endpoint).toHttpUrl().newBuilder().apply{params.filterValues{it.isNotBlank()}.forEach{(k,v)->addQueryParameter(k,v)}}.build()
+        try {
+            return client.newCall(Request.Builder().url(url).header("User-Agent","LyriLayer/0.1.1 (https://github.com/contigo/LyriLayer)").header("Accept","application/json").build()).execute().use{r->
                 when {
-                    r.code==404 -> Lyric(t.key,status="NOT_FOUND",source="LRCLIB")
-                    !r.isSuccessful -> throw IOException("LRCLIB HTTP ${r.code}")
-                    else -> {
-                        val j=JSONObject(r.body?.string() ?: throw IOException("Empty response"))
-                        val plain=if(j.isNull("plainLyrics")) "" else j.optString("plainLyrics")
-                        val synced=if(j.isNull("syncedLyrics")) "" else j.optString("syncedLyrics")
-                        Lyric(t.key,plain,synced,"LRCLIB",when { j.optBoolean("instrumental") -> "INSTRUMENTAL"; plain.isNotBlank() || synced.isNotBlank() -> "FOUND"; else -> "NOT_FOUND" })
-                    }
+                    r.code==404 -> null
+                    r.code==429||r.code==503 -> throw IOException("가사 서버 사용량 제한 (HTTP ${r.code})")
+                    !r.isSuccessful -> throw IOException("가사 서버 오류 (HTTP ${r.code})")
+                    else -> r.body?.string()?:throw IOException("가사 서버 응답 없음")
                 }
             }
+        }finally{delay(350)}
+    }
+    private fun lyric(t:Track,j:JSONObject):Lyric?{
+        val plain=text(j,"plainLyrics");val synced=text(j,"syncedLyrics").takeIf{Lrc.parse(it).isNotEmpty()}.orEmpty()
+        val instrumental=j.optBoolean("instrumental")
+        if(plain.isBlank()&&synced.isBlank()&&!instrumental)return null
+        return Lyric(t.key,plain,synced,"LRCLIB",if(plain.isBlank()&&synced.isBlank())"INSTRUMENTAL" else "FOUND")
+    }
+    private data class Candidate(val value:Lyric,val score:Int,val artist:String,val seconds:Double)
+    private fun candidate(t:Track,id:MusicRules.Identity,j:JSONObject):Candidate?{
+        val l=lyric(t,j)?:return null
+        val a=text(j,"artistName");val seconds=j.optDouble("duration",0.0)
+        val score=MusicRules.score(id,t.album,t.duration,text(j,"trackName"),a,text(j,"albumName"),seconds,l.synced.isNotBlank())?:return null
+        return Candidate(l,score,a,seconds)
+    }
+    private suspend fun online(t:Track):Lyric?{
+        val ids=MusicRules.identities(t.title,t.artist,t.fileName)
+        if(ids.isEmpty())return null
+        val candidates=linkedMapOf<String,Candidate>()
+        var error:IOException?=null
+        suspend fun safe(endpoint:String,params:Map<String,String>):String? = try{request(endpoint,params)}catch(e:CancellationException){throw e}catch(e:IOException){error=e;if(e.message?.contains("사용량 제한")==true)throw e;null}
+        val id=ids.first()
+        var partial:Lyric?=null
+        if(id.artist.isNotBlank()&&t.duration>0){
+            val exact=safe("get-cached",mapOf("track_name" to id.title,"artist_name" to id.artist,"album_name" to MusicRules.clean(t.album),"duration" to ((t.duration+500)/1000).toString()))
+            if(exact!=null){
+                val l=candidate(t,id,JSONObject(exact))?.value
+                if(l!=null&&l.synced.isNotBlank())return l
+                partial=l
+            }
+        }
+        val searches=linkedSetOf<Pair<MusicRules.Identity,Map<String,String>>>()
+        for(x in ids){
+            searches+=x to mapOf("track_name" to x.title,"artist_name" to x.artist)
+            if(x.artist.isNotBlank())searches+=x to mapOf("q" to "${x.title} ${x.artist}")
+        }
+        for((x,params) in searches.take(6)){
+            val raw=safe("search",params)?:continue
+            val a=JSONArray(raw)
+            for(i in 0 until minOf(a.length(),50)){
+                val j=a.optJSONObject(i)?:continue
+                val c=candidate(t,x,j)?:continue
+                val key=j.optString("id",j.toString())
+                if((candidates[key]?.score?:-1)<c.score)candidates[key]=c
+            }
+            val best=candidates.values.maxByOrNull{it.score}
+            if(best!=null&&best.score>=145&&best.value.synced.isNotBlank()&&candidates.values.none{best.score-it.score<=8&&!MusicRules.artistMatches(best.artist,it.artist)})return best.value
+        }
+        val sorted=candidates.values.sortedByDescending{it.score};val best=sorted.firstOrNull()
+        if(best!=null&&sorted.drop(1).none{best.score-it.score<=8&&(!MusicRules.artistMatches(best.artist,it.artist)||kotlin.math.abs(best.seconds-it.seconds)>4)}){
+            if(best.value.synced.isNotBlank()||partial==null)return best.value
+        }
+        if(partial!=null)return partial
+        // Last resort: LRCLIB's exact endpoint may fetch additional sources.
+        if(id.artist.isNotBlank()&&t.duration>0){
+            val raw=safe("get",mapOf("track_name" to id.title,"artist_name" to id.artist,"album_name" to MusicRules.clean(t.album),"duration" to ((t.duration+500)/1000).toString()))
+            if(raw!=null)candidate(t,id,JSONObject(raw))?.value?.let{return it}
+        }
+        error?.let{throw it}
+        return null
+    }
+    suspend fun resolve(c:Context,t:Track,force:Boolean=false):Lyric=gate.withLock{
+        withContext(Dispatchers.IO){
+            if(t.excluded||MusicRules.excluded("",t.fileName,t.title))throw IOException("녹음 파일은 검색하지 않습니다")
+            val dao=LyricsDb.get(c).dao();val old=dao.get(t.key)
+            if(old!=null&&(old.edited||(!force&&(old.status=="FOUND"||old.status=="INSTRUMENTAL"||(old.status=="NOT_FOUND"&&old.source==MISS&&System.currentTimeMillis()-old.fetched<86400000)))))return@withContext old
+            val result=try{online(t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)}catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
             ensureActive()
-            if (old?.status == "FOUND" && result.status != "FOUND") return@withContext old
-            if(dao.insert(result)==-1L) dao.updateAuto(result.key,result.plain,result.synced,result.source,result.status,result.fetched)
-            delay(350)
-            dao.get(t.key) ?: result
+            if(old?.status=="FOUND"&&(result.status!="FOUND"||(old.synced.isNotBlank()&&result.synced.isBlank())))return@withContext old
+            if(dao.insert(result)==-1L)dao.updateAuto(result.key,result.plain,result.synced,result.source,result.status,result.fetched)
+            dao.get(t.key)?:result
         }
     }
 }

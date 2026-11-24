@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
                     0 -> {
                         val found=tracks.count { map[it.key]?.status=="FOUND" || map[it.key]?.status=="INSTRUMENTAL" }
                         Text("전체 ${tracks.size}곡 · 등록 $found · 미등록 ${tracks.size-found}")
+                        Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall)
                         if(!allowed) Button(onClick={permission.launch(audioPermission)}) { Text("음악 파일 접근 허용") }
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             Button(onClick={BatchWorker.start(this@MainActivity)},enabled=allowed && job?.state?.isFinished!=false) { Text("가사 일괄 수집") }
@@ -66,13 +67,15 @@ class MainActivity : ComponentActivity() {
                         if(job!=null) {
                             val data=if(job.state.isFinished) job.outputData else job.progress
                             Text("수집: ${job.state} · ${data.getInt("done",0)}/${data.getInt("total",0)}")
+                            Text("성공 ${data.getInt("found",0)} · 없음 ${data.getInt("missing",0)} · 오류 ${data.getInt("errors",0)}")
+                            data.getString("lastError")?.takeIf { it.isNotBlank() }?.let { Text(it,color=MaterialTheme.colorScheme.error) }
                             if(!job.state.isFinished) TextButton(onClick={work.cancelUniqueWork(BatchWorker.NAME)}) { Text("수집 중단") }
                         }
                         OutlinedTextField(query,{query=it},label={Text("곡 제목 / 가수 검색")},modifier=Modifier.fillMaxWidth(),singleLine=true)
                         Text(message)
                         LazyColumn(Modifier.weight(1f)) { items(tracks.filter { it.title.contains(query,true) || it.artist.contains(query,true) }) { t ->
                             val l=map[t.key]
-                            ListItem(headlineContent={Text(t.title)},supportingContent={Text("${t.artist} · ${when { l?.status=="INSTRUMENTAL" -> "연주곡"; !l?.synced.isNullOrBlank() -> "싱크 가사"; l?.status=="FOUND" -> "일반 가사"; l?.status=="NOT_FOUND" -> "검색 실패"; else -> "미등록" }}")},trailingContent={Row { TextButton(onClick={edit=t}) { Text("편집") }; TextButton(onClick={scope.launch { message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); message="${t.title}: ${result.status}" } catch(e: CancellationException){throw e} catch(e: Exception){message="검색 오류: ${e.message}"} }}) { Text("검색") } }})
+                            ListItem(headlineContent={Text(t.title)},supportingContent={Text("${t.artist} · ${when { l?.status=="INSTRUMENTAL" -> "연주곡"; !l?.synced.isNullOrBlank() -> "싱크 가사"; l?.status=="FOUND" -> "일반 가사"; l?.status=="NOT_FOUND" -> "검색 실패"; else -> "미등록" }}")},trailingContent={Row { TextButton(onClick={edit=t}) { Text("편집") }; TextButton(onClick={scope.launch { message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); message="${t.title}: ${when { result.status=="INSTRUMENTAL" -> "연주곡"; result.synced.isNotBlank() -> "싱크 가사 저장 완료"; result.status=="FOUND" -> "일반 가사 저장 완료"; else -> "가사 없음 · 편집에서 Google 검색 가능" }}" } catch(e: CancellationException){throw e} catch(e: Exception){message="검색 오류: ${e.message}"} }}) { Text("검색") } }})
                             HorizontalDivider()
                         } }
                     }

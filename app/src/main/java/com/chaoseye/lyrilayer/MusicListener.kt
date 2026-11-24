@@ -57,13 +57,14 @@ class MusicListener : NotificationListenerService() {
                     fetch?.cancel(); activeKey=track.key; lyric=null; lines=emptyList(); error="가사 검색 중"
                     fetch=scope.launch {
                         try {
-                            val match=withContext(Dispatchers.IO) { runCatching { Library.scan(this@MusicListener) }.getOrDefault(emptyList()).filter { it.title.equals(track.title,true) && it.artist.equals(track.artist,true) && (track.album.isBlank() || it.album.equals(track.album,true)) && (track.duration<=0 || kotlin.math.abs(it.duration-track.duration)<=2000) }.singleOrNull() }
-                            val actual=match ?: track
+                            val match=withContext(Dispatchers.IO) { runCatching { Library.allAudio(this@MusicListener) }.getOrDefault(emptyList()).filter { MusicRules.norm(it.title)==MusicRules.norm(track.title) && (MusicRules.clean(track.artist).isBlank() || MusicRules.artistMatches(it.artist,track.artist)) && (track.duration<=0 || kotlin.math.abs(it.duration-track.duration)<=3000) }.let { matches -> matches.firstOrNull { it.excluded } ?: matches.distinctBy { it.key }.singleOrNull() } }
+                            val actual=match ?: run { error="음악 목록에서 곡을 확인할 수 없습니다 · 음악 접근 권한 확인"; return@launch }
+                            if(actual.excluded) { error="녹음 및 기타 오디오는 제외됩니다"; return@launch }
                             val initial=Repository.resolve(this@MusicListener,actual)
                             fun apply(l: Lyric?) { lyric=l; lines=Lrc.parse(l?.synced.orEmpty()); error=if(l?.status=="NOT_FOUND") "가사를 찾지 못했습니다" else if(l?.status=="INSTRUMENTAL") "연주곡" else "" }
                             apply(initial)
                             LyricsDb.get(this@MusicListener).dao().observe().collect { all -> apply(all.find { it.key==actual.key }) }
-                        } catch(e: CancellationException) { throw e } catch(e: Exception) { error="가사 검색 실패 · 앱에서 다시 검색하세요" }
+                        } catch(e: CancellationException) { throw e } catch(e: Exception) { error="가사 검색 오류 · ${e.message ?: "앱에서 다시 검색하세요"}" }
                     }
                 }
                 val playing=state.state==PlaybackState.STATE_PLAYING
