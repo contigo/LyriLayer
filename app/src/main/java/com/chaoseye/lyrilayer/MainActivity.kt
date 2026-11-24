@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
         val job=jobs.firstOrNull { !it.state.isFinished } ?: jobs.firstOrNull()
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
+        var showMissingOverlay by remember { mutableStateOf(prefs.getBoolean(OverlayContent.SHOW_MISSING,true)) }
         var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
         var overlayPosition by remember { mutableIntStateOf(OverlayPosition.normalize(prefs.getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))) }
         fun saveOverlayPosition(value:Int){
@@ -317,7 +318,14 @@ class MainActivity : ComponentActivity() {
                         Button(onClick={requestAccess(RequiredAccess.LISTENER)}) { Text("알림 접근 설정") }
                         Button(onClick={requestAccess(RequiredAccess.OVERLAY)}) { Text("다른 앱 위에 표시 권한") }
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
-                        Text("싱크 가사가 있는 곡이 재생 중이면 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
+                        Text("음악 재생 중 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){
+                                Text("가사가 없는 음악도 표시",fontSize=16.sp)
+                                Text("곡 제목, 검색 상태 및 AI 분석 진행률",fontSize=12.sp,color=neutralColor)
+                            }
+                            Switch(showMissingOverlay,{showMissingOverlay=it;prefs.edit().putBoolean(OverlayContent.SHOW_MISSING,it).apply()})
+                        }
                         HorizontalDivider()
                         OutlinedButton(onClick={settingsScreen="position"},modifier=Modifier.fillMaxWidth()){
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){

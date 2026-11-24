@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -25,7 +27,11 @@ internal object NativeWhisper {
     external fun close(handle:Long)
 }
 
+internal data class AiAnalysisProgress(val trackKey:String,val percent:Int)
+
 object DeviceLyrics {
+    private val _activeAnalysis=MutableStateFlow<AiAnalysisProgress?>(null)
+    internal val activeAnalysis=_activeAnalysis.asStateFlow()
     private const val MODEL="ggml-base-q5_1.bin"
     private const val SIZE=59707625L
     private const val SHA="422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"
@@ -67,11 +73,17 @@ object DeviceLyrics {
         }
     }
     suspend fun extract(c:Context,t:Track,language:String,preview:(String)->Unit={},progress:(Int,String)->Unit):String=lock.withLock{
+        _activeAnalysis.value=AiAnalysisProgress(t.key,0)
+        try {
         withContext(Dispatchers.IO){
+            fun report(percent:Int,stage:String){
+                _activeAnalysis.value=AiAnalysisProgress(t.key,percent.coerceIn(0,100))
+                progress(percent,stage)
+            }
             if(t.excluded||t.uri.isBlank()||MusicRules.excluded("",t.fileName,t.title))throw IOException("분석할 음악 파일이 없습니다")
             if(!supported()||!ready(c))throw IOException("설정에서 AI 모델을 먼저 다운로드하세요")
             if(t.duration>12*60*1000L)throw IOException("현재 AI 분석은 12분 이하 곡을 지원합니다")
-            progress(0,"음악 디코딩")
+            report(0,"음악 디코딩")
             val pcm=AudioPcm.read(c,Uri.parse(t.uri))
             currentCoroutineContext().ensureActive()
             if(pcm.isEmpty())throw IOException("음원 디코딩 결과 없음")
@@ -84,7 +96,7 @@ object DeviceLyrics {
                 while(start<pcm.size){
                     currentCoroutineContext().ensureActive()
                     val end=minOf(start+chunk,pcm.size)
-                    progress(start*100/pcm.size,"보컬 음성 인식")
+                    report(start*100/pcm.size,"보컬 음성 인식")
                     val part=NativeWhisper.decode(handle,pcm.copyOfRange(start,end),minOf(4,Runtime.getRuntime().availableProcessors()),language,start.toLong()*1000/16000)
                         ?:throw IOException("AI 음성 인식 실패")
                     currentCoroutineContext().ensureActive()
@@ -95,14 +107,15 @@ object DeviceLyrics {
                     }
                     start=end
                     preview(output.toString())
-                    progress(start*100/pcm.size,"분석 구간 완료")
+                    report(start*100/pcm.size,"분석 구간 완료")
                 }
                 currentCoroutineContext().ensureActive()
                 if(Lrc.parse(output.toString()).isEmpty())throw IOException("인식된 가사가 없습니다")
-                progress(100,"확인 후 저장하세요")
+                report(100,"확인 후 저장하세요")
                 output.toString()
             }finally{NativeWhisper.close(handle)}
         }
+        }finally{_activeAnalysis.value=null}
     }
 }
 
