@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
@@ -45,8 +46,8 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun Screen() {
         val tick=refresh.intValue
-        val audioPermission=if(Build.VERSION.SDK_INT>=33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
-        val allowed=checkSelfPermission(audioPermission)==PackageManager.PERMISSION_GRANTED
+        val audioPermission=FloatingPermissions.audioName()
+        val allowed=FloatingPermissions.audioGranted(this)
         val db=remember { LyricsDb.get(this) }
         val stored by remember { db.dao().observe() }.collectAsStateWithLifecycle(initialValue=emptyList())
         val map=remember(stored) { stored.associateBy { it.key } }
@@ -70,11 +71,11 @@ class MainActivity : ComponentActivity() {
         val scope=rememberCoroutineScope()
         val now by Playback.now.collectAsStateWithLifecycle()
         val listenerConnected by Playback.connected.collectAsStateWithLifecycle()
-        val listenerComponent=remember { ComponentName(this,MusicListener::class.java) }
-        val listenerAllowed=remember(tick) { Settings.Secure.getString(contentResolver,"enabled_notification_listeners").orEmpty().split(":").any { ComponentName.unflattenFromString(it)==listenerComponent } }
+        val listenerComponent=remember { FloatingPermissions.component(this) }
+        val listenerAllowed=remember(tick) { FloatingPermissions.listenerGranted(this) }
         val overlayAllowed=remember(tick) { Settings.canDrawOverlays(this) }
         LaunchedEffect(tick,allowed,listenerAllowed) {
-            if(listenerAllowed&&!Playback.connected.value) NotificationListenerService.requestRebind(listenerComponent)
+            if(listenerAllowed&&!Playback.connected.value) FloatingPermissions.rebind(this@MainActivity)
             if(allowed&&listenerAllowed) Playback.retry.value++
         }
         val work=remember { WorkManager.getInstance(this) }
@@ -83,6 +84,47 @@ class MainActivity : ComponentActivity() {
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
         var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
+        // Save the pass across rotations; each permission is offered only once per launch/pass.
+        var permissionPass by rememberSaveable { mutableStateOf(true) }
+        var permissionAttempted by rememberSaveable { mutableIntStateOf(0) }
+        var permissionPending by rememberSaveable { mutableStateOf(false) }
+        var permissionError by rememberSaveable { mutableStateOf("") }
+        val accessResult=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){
+            permissionPending=false;refresh.intValue++
+        }
+        val audioResult=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){
+            permissionPending=false;refresh.intValue++
+        }
+        val missing=if(permissionPass&&!permissionPending)PermissionPlan.next(allowed,listenerAllowed,overlayAllowed,permissionAttempted) else null
+        LaunchedEffect(permissionPass,permissionPending,missing) {
+            if(permissionPass&&!permissionPending&&missing==null)permissionPass=false
+        }
+        fun startAccessPass(){
+            permissionAttempted=0;permissionPending=false;permissionError="";permissionPass=true;refresh.intValue++
+        }
+        fun requestAccess(access:RequiredAccess){
+            permissionAttempted=permissionAttempted or access.bit
+            permissionPending=true;permissionError=""
+            try {
+                when(access){
+                    RequiredAccess.AUDIO -> {
+                        val asked=prefs.getBoolean("audio_permission_asked",false)
+                        if(asked&&!shouldShowRequestPermissionRationale(audioPermission)){
+                            accessResult.launch(FloatingPermissions.appSettings(this@MainActivity))
+                        }else{
+                            prefs.edit().putBoolean("audio_permission_asked",true).apply()
+                            audioResult.launch(audioPermission)
+                        }
+                    }
+                    RequiredAccess.LISTENER -> accessResult.launch(FloatingPermissions.listenerSettings(this@MainActivity))
+                    RequiredAccess.OVERLAY -> accessResult.launch(FloatingPermissions.overlaySettings(this@MainActivity))
+                }
+            }catch(e:Exception){
+                permissionPending=false
+                permissionError="권한 설정 화면을 열지 못했습니다. 휴대전화 설정에서 직접 허용해 주세요."
+                refresh.intValue++
+            }
+        }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
         Scaffold(bottomBar={ NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -97,7 +139,7 @@ class MainActivity : ComponentActivity() {
                             withStyle(SpanStyle(color=neutralColor)){append("미등록 ${tracks.size-found}")}
                         },fontSize=18.sp)
                         Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
-                        if(!allowed) Button(onClick={permission.launch(audioPermission)}) { Text("음악 파일 접근 허용") }
+                        if(!allowed) Button(onClick={startAccessPass()}) { Text("음악 파일 접근 허용") }
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             Button(onClick={BatchWorker.start(this@MainActivity)},enabled=allowed && job?.state?.isFinished!=false) { Text("가사 일괄 수집",fontSize=16.sp) }
                             OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침",fontSize=16.sp) }
@@ -158,15 +200,19 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         Text("삼성 뮤직 연결",style=MaterialTheme.typography.titleLarge)
                         Text("알림 접근 권한은 삼성 뮤직 MediaSession을 읽기 위해 사용합니다. 알림 본문은 수집하지 않습니다.")
-                        Button(onClick={startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))}) { Text("알림 접근 설정") }
-                        Button(onClick={startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))}) { Text("다른 앱 위에 표시 권한") }
-                        Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply()}) }
-                        Text("싱크 가사가 있는 곡을 재생할 때만 오버레이를 표시합니다.")
+                        Text("필수 권한 · ${listOf(allowed,listenerAllowed,overlayAllowed).count{it}} / 3 허용",fontSize=16.sp,color=if(allowed&&listenerAllowed&&overlayAllowed)successColor else failureColor)
+                        Text("음악 파일 접근: "+if(allowed)"허용됨" else "권한 필요",color=if(allowed)successColor else failureColor,fontSize=14.sp)
+                        if(!allowed||!listenerAllowed||!overlayAllowed)Button(onClick={startAccessPass()}){Text("필수 권한 다시 설정")}
+                        if(permissionError.isNotBlank())Text(permissionError,color=failureColor,fontSize=14.sp)
+                        Button(onClick={requestAccess(RequiredAccess.LISTENER)}) { Text("알림 접근 설정") }
+                        Button(onClick={requestAccess(RequiredAccess.OVERLAY)}) { Text("다른 앱 위에 표시 권한") }
+                        Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
+                        Text("싱크 가사가 있는 곡이 재생 중이면 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
                         HorizontalDivider()
                         Text("플로팅 실행 테스트",style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
                         Row(verticalAlignment=Alignment.CenterVertically){
                             Text("테스트 모드",Modifier.weight(1f),fontSize=16.sp)
-                            Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it&&listenerAllowed&&!Playback.connected.value)NotificationListenerService.requestRebind(listenerComponent)})
+                            Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it){if(!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}})
                         }
                         Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 테스트 문구를 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
                         Text("알림 접근: "+if(listenerAllowed)"허용됨" else "권한 필요",color=if(listenerAllowed)successColor else failureColor,fontSize=14.sp)
@@ -191,6 +237,23 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+        missing?.let { access ->
+            AlertDialog(
+                onDismissRequest={permissionPass=false},
+                title={Text("플로팅 가사 권한 설정")},
+                text={
+                    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+                        Text("${access.ordinal+1} / 3 · ${access.label}",fontSize=18.sp)
+                        Text(access.explanation,fontSize=14.sp)
+                        if(access==RequiredAccess.LISTENER)Text("설정에서 현재 설치한 LyriLayer 또는 LyriLayer Dev의 음악 감지 서비스를 허용하세요. Android 13 이상에서 제한된 설정 안내가 나오면 앱 정보에서 사용자 직접 허용이 필요할 수 있습니다.",fontSize=14.sp)
+                        if(access==RequiredAccess.OVERLAY)Text("설정 목록에서 현재 앱을 찾아 다른 앱 위에 표시를 허용하세요.",fontSize=14.sp)
+                        Text("권한은 직접 허용해야 합니다. 나중에 설정 탭에서 다시 요청할 수 있습니다.",fontSize=12.sp)
+                    }
+                },
+                confirmButton={TextButton(onClick={requestAccess(access)}){Text(if(access==RequiredAccess.AUDIO)"권한 요청" else "설정 열기")}},
+                dismissButton={TextButton(onClick={permissionPass=false}){Text("나중에")}}
+            )
         }
         manualSearch?.let { t ->
             var term by remember(t){mutableStateOf(listOf(MusicRules.clean(t.artist),MusicRules.title(t.title)).filter{it.isNotBlank()}.joinToString(" "))}

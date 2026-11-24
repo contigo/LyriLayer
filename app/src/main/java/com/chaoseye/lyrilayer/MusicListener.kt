@@ -36,6 +36,8 @@ class MusicListener : NotificationListenerService() {
     private val wm get() = getSystemService(WindowManager::class.java)
     override fun onListenerConnected() {
         super.onListenerConnected()
+        // This system-bound service is independent of both app Activities.
+        // Do not gate overlays on Samsung Music or LyriLayer being foreground.
         Playback.connected.value=true
         monitor?.cancel();fetch?.cancel();activeKey=null
         monitor=scope.launch {
@@ -147,6 +149,12 @@ class MusicListener : NotificationListenerService() {
         return overlay!=null
     }
     private fun hide() { overlay?.let { runCatching { wm.removeViewImmediate(it) } }; overlay=null }
-    override fun onListenerDisconnected() { Playback.connected.value=false;monitor?.cancel(); fetch?.cancel(); activeKey=null; lyric=null; lines=emptyList(); hide(); Playback.now.value=NowPlaying(); super.onListenerDisconnected() }
+    override fun onListenerDisconnected() {
+        Playback.connected.value=false;monitor?.cancel();fetch?.cancel();activeKey=null;lyric=null;lines=emptyList()
+        hide();Playback.now.value=NowPlaying(message="음악 감지 서비스 연결 대기",overlayStatus="음악 감지 서비스 연결 대기")
+        super.onListenerDisconnected()
+        // Reconnect after system disconnection only while the user still grants access.
+        FloatingPermissions.rebind(this)
+    }
     override fun onDestroy() { Playback.connected.value=false;scope.cancel(); hide(); Playback.now.value=NowPlaying(); super.onDestroy() }
 }
