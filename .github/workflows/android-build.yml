@@ -30,10 +30,8 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.LYRILAYER_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
-          if [[ -z "$KEYSTORE_B64" && -z "$KEYSTORE_PASSWORD" ]]; then
-            echo "::warning::Temporary debug signing enabled for test releases. In-place updates may fail."
-          elif [[ -z "$KEYSTORE_B64" || -z "$KEYSTORE_PASSWORD" ]]; then
-            echo "::error::Signing configuration incomplete. Configure both signing secrets."
+          if [[ -z "$KEYSTORE_B64" || -z "$KEYSTORE_PASSWORD" ]]; then
+            echo "::error::Persistent development signing credentials required. Configure both signing secrets."
             exit 1
           fi
       - name: Install Android SDK 36
@@ -65,18 +63,20 @@ jobs:
           set -euo pipefail
           TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           mkdir -p artifacts
-          if [[ -z "$KEYSTORE_B64" && -z "$KEYSTORE_PASSWORD" ]]; then
-            cp app/build/outputs/apk/debug/app-debug.apk artifacts/LyriLayer-dev.apk
-            echo "APK_SIGNING_NOTE=Temporary debug signing; in-place updates may fail due to signature mismatch. Back up lyrics before reinstalling." >> "$GITHUB_ENV"
-          else
-            umask 077
-            KS="$(mktemp "$RUNNER_TEMP/lyrilayer-signing.XXXXXX")"
-            trap 'rm -f "$KS"' EXIT
-            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KS"
-            "$TOOLS/apksigner" sign --ks "$KS" --ks-key-alias lyrilayer --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out artifacts/LyriLayer-dev.apk app/build/outputs/apk/debug/app-debug.apk
-            echo "APK_SIGNING_NOTE=Persistent key signing; updates require the same certificate." >> "$GITHUB_ENV"
+          umask 077
+          KS="$(mktemp "$RUNNER_TEMP/lyrilayer-signing.XXXXXX")"
+          trap 'rm -f "$KS"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KS"
+          "$TOOLS/apksigner" sign --ks "$KS" --ks-key-alias lyrilayer --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out artifacts/LyriLayer-dev.apk app/build/outputs/apk/debug/app-debug.apk
+          CERT_INFO="$("$TOOLS/apksigner" verify --verbose --print-certs artifacts/LyriLayer-dev.apk)"
+          printf '%s\n' "$CERT_INFO"
+          ACTUAL="$(printf '%s\n' "$CERT_INFO" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          EXPECTED="7e179e25aaf7980cad8b94c12d1a172b5736260cd7d34fc31d568687be1f7e17"
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::APK signing certificate changed. Refusing to publish an incompatible update."
+            exit 1
           fi
-          "$TOOLS/apksigner" verify --verbose --print-certs artifacts/LyriLayer-dev.apk
+          echo "APK_SIGNING_NOTE=Persistent key signing; certificate SHA-256 verified against the pinned development certificate." >> "$GITHUB_ENV"
           "$TOOLS/zipalign" -c -P 16 4 artifacts/LyriLayer-dev.apk
           "$TOOLS/aapt" dump badging artifacts/LyriLayer-dev.apk | grep -F "package: name='com.chaoseye.lyrilayer.debug'" > /dev/null
       - uses: actions/upload-artifact@v4

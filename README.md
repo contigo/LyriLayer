@@ -70,3 +70,7 @@ Apache License 2.0 (LICENSE).
 - debug: `com.chaoseye.lyrilayer.debug`, 표시명 LyriLayer Dev. GitHub Releases에는 `LyriLayer-dev.apk`만 배포. 기존 `LYRILAYER_KEYSTORE_B64` / `LYRILAYER_KEYSTORE_PASSWORD`는 개발 APK 전용이며, 미설정 시 임시 debug 서명으로 배포.
 - release: `com.chaoseye.lyrilayer`, 표시명 LyriLayer. `gradle :app:bundleRelease`로 서명되지 않은 AAB 생성; Actions Artifacts에서 제공. Play Console에 제출하기 전 별도 업로드 키로 서명해야 함. Play 업로드 및 앱 서명 키 생성은 자동 수행하지 않음.
 - Kotlin namespace/JNI 클래스 경로는 기존과 동일. DB, 설정, 다운로드 모델, 알림 접근 및 오버레이 권한은 각각 분리. v0.1.8 이전 앱은 정식 패키지에 남으므로 자동 삭제/데이터 이관하지 않음. 두 앱의 오버레이 동시 활성화는 피할 것.
+
+## v0.1.10 — 개발 APK 고정 서명 적용
+- 등록한 개발 서명 키를 사용하며 APK 인증서 SHA-256을 확인합니다. 키 누락 또는 인증서 불일치 시 배포를 중단하여 업데이트 호환성을 보호합니다. 정식 AAB는 별도 미서명 상태입니다.
+- 임시 키로 설치한 v0.1.9 개발 앱은 기존 가사를 백업한 뒤 한 번 재설치해야 할 수 있습니다. 이후 같은 서명으로 업데이트합니다.
