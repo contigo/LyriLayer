@@ -1,4 +1,4 @@
-# LyriLayer 0.1.5
+# LyriLayer
 
 삼성 뮤직 전용 읽기 전용 가사 도우미. 재생/정지/탐색 등 음악 제어 없음.
 
@@ -65,3 +65,8 @@ Apache License 2.0 (LICENSE).
 
 ### 임시 테스트 배포 (v0.1.8부터)
 고정 서명 Secrets 두 개가 모두 미등록이면 임시 debug 서명 APK를 pre-release로 배포합니다. 서명이 달라 기존 앱 업데이트가 실패할 수 있습니다. 두 Secrets를 모두 등록하면 자동으로 고정 서명을 사용하며, 하나만 등록한 경우 빌드를 중단합니다.
+
+## v0.1.9 — 개발/정식 패키지 분리
+- debug: `com.chaoseye.lyrilayer.debug`, 표시명 LyriLayer Dev. GitHub Releases에는 `LyriLayer-dev.apk`만 배포. 기존 `LYRILAYER_KEYSTORE_B64` / `LYRILAYER_KEYSTORE_PASSWORD`는 개발 APK 전용이며, 미설정 시 임시 debug 서명으로 배포.
+- release: `com.chaoseye.lyrilayer`, 표시명 LyriLayer. `gradle :app:bundleRelease`로 서명되지 않은 AAB 생성; Actions Artifacts에서 제공. Play Console에 제출하기 전 별도 업로드 키로 서명해야 함. Play 업로드 및 앱 서명 키 생성은 자동 수행하지 않음.
+- Kotlin namespace/JNI 클래스 경로는 기존과 동일. DB, 설정, 다운로드 모델, 알림 접근 및 오버레이 권한은 각각 분리. v0.1.8 이전 앱은 정식 패키지에 남으므로 자동 삭제/데이터 이관하지 않음. 두 앱의 오버레이 동시 활성화는 피할 것.

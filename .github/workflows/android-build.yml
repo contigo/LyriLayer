@@ -54,6 +54,8 @@ jobs:
         run: gradle :app:testDebugUnitTest --stacktrace
       - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace
+      - name: Build unsigned production AAB (Play upload key required before submission)
+        run: gradle :app:bundleRelease --stacktrace
       - name: Sign and verify APK
         shell: bash
         env:
@@ -64,22 +66,29 @@ jobs:
           TOOLS="$ANDROID_HOME/build-tools/36.0.0"
           mkdir -p artifacts
           if [[ -z "$KEYSTORE_B64" && -z "$KEYSTORE_PASSWORD" ]]; then
-            cp app/build/outputs/apk/debug/app-debug.apk artifacts/LyriLayer-debug.apk
+            cp app/build/outputs/apk/debug/app-debug.apk artifacts/LyriLayer-dev.apk
             echo "APK_SIGNING_NOTE=Temporary debug signing; in-place updates may fail due to signature mismatch. Back up lyrics before reinstalling." >> "$GITHUB_ENV"
           else
             umask 077
             KS="$(mktemp "$RUNNER_TEMP/lyrilayer-signing.XXXXXX")"
             trap 'rm -f "$KS"' EXIT
             printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KS"
-            "$TOOLS/apksigner" sign --ks "$KS" --ks-key-alias lyrilayer --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out artifacts/LyriLayer-debug.apk app/build/outputs/apk/debug/app-debug.apk
+            "$TOOLS/apksigner" sign --ks "$KS" --ks-key-alias lyrilayer --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out artifacts/LyriLayer-dev.apk app/build/outputs/apk/debug/app-debug.apk
             echo "APK_SIGNING_NOTE=Persistent key signing; updates require the same certificate." >> "$GITHUB_ENV"
           fi
-          "$TOOLS/apksigner" verify --verbose --print-certs artifacts/LyriLayer-debug.apk
-          "$TOOLS/zipalign" -c -P 16 4 artifacts/LyriLayer-debug.apk
+          "$TOOLS/apksigner" verify --verbose --print-certs artifacts/LyriLayer-dev.apk
+          "$TOOLS/zipalign" -c -P 16 4 artifacts/LyriLayer-dev.apk
+          "$TOOLS/aapt" dump badging artifacts/LyriLayer-dev.apk | grep -E "^package: name=\x27com\.chaoseye\.lyrilayer\.debug\x27" > /dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: LyriLayer-APK
-          path: artifacts/LyriLayer-debug.apk
+          path: artifacts/LyriLayer-dev.apk
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LyriLayer-Play-unsigned-AAB
+          path: app/build/outputs/bundle/release/app-release.aab
           retention-days: 7
           if-no-files-found: error
       - name: Publish verified APK to GitHub Releases
@@ -93,7 +102,7 @@ jobs:
           VERSION="$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts)"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           TAG="v$VERSION"
-          APK="artifacts/LyriLayer-debug.apk"
+          APK="artifacts/LyriLayer-dev.apk"
           test -s "$APK"
           unzip -tq "$APK"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -104,5 +113,5 @@ jobs:
             echo "Tag $TAG exists without a release. Refusing to publish against an unverified tag."
             exit 1
           fi
-          NOTES="$(printf 'Automated Android test release.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- %s\n- Real-device validation pending.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$APK_SIGNING_NOTE" "$GH_REPO" "$GITHUB_RUN_ID")"
-          gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "LyriLayer $TAG" --notes "$NOTES" --prerelease
+          NOTES="$(printf 'Automated Android development release (com.chaoseye.lyrilayer.debug).\n- Installs separately from com.chaoseye.lyrilayer; independent app data and permissions.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- %s\n- Real-device validation pending.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$APK_SIGNING_NOTE" "$GH_REPO" "$GITHUB_RUN_ID")"
+          gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "LyriLayer Dev $TAG" --notes "$NOTES" --prerelease

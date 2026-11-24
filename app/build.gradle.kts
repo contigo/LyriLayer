@@ -11,12 +11,24 @@ android {
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     defaultConfig {
         applicationId = "com.chaoseye.lyrilayer"
+        manifestPlaceholders["appLabel"] = "LyriLayer"
+        manifestPlaceholders["listenerLabel"] = "LyriLayer 음악 감지"
         minSdk = 26
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_shared" } }
-        versionCode = 9
-        versionName = "0.1.8"
+        versionCode = 10
+        versionName = "0.1.9"
+    }
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["appLabel"] = "LyriLayer Dev"
+            manifestPlaceholders["listenerLabel"] = "LyriLayer Dev 음악 감지"
+        }
+        getByName("release") {
+            isDebuggable = false
+        }
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
