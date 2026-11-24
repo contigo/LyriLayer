@@ -129,6 +129,9 @@ class MainActivity : ComponentActivity() {
         var aiModel by remember{mutableStateOf(DeviceLyrics.selected(this).id)}
         var aiThreads by remember{mutableIntStateOf(aiPrefs.getInt(AiPerformance.THREADS_KEY,0))}
         var aiReuse by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.REUSE_KEY,true))}
+        var autoSaveExtract by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.EXTRACT_KEY,AiAutoSave.DEFAULT_ENABLED))}
+        var autoSaveAlign by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.ALIGN_KEY,AiAutoSave.DEFAULT_ENABLED))}
+        var reviewUncertain by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.REVIEW_UNCERTAIN_KEY,AiAutoSave.DEFAULT_ENABLED))}
         var aiLanguageOnce by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.LANGUAGE_KEY,false))}
         val activeAnalysis by DeviceLyrics.activeAnalysis.collectAsStateWithLifecycle()
         var modelBusy by remember { mutableStateOf(false) }
@@ -432,6 +435,20 @@ class MainActivity : ComponentActivity() {
                         }
                         Text("온디바이스 AI 가사",style=MaterialTheme.typography.titleLarge)
                         val performanceBusy=modelBusy||aiRunning||queuedLive.running||activeAnalysis!=null
+                        Text("AI 분석 결과 저장 설정",fontSize=18.sp)
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){Text("AI 생성 가사 자동 저장");Text("일괄 분석 완료 후 즉시 가사 등록",fontSize=12.sp)}
+                            Switch(autoSaveExtract,{autoSaveExtract=it;aiPrefs.edit().putBoolean(AiAutoSave.EXTRACT_KEY,it).apply()})
+                        }
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){Text("AI 자동 싱크 결과 자동 저장");Text("일반 가사 원문 유지 · 시간 정보 등록",fontSize=12.sp)}
+                            Switch(autoSaveAlign,{autoSaveAlign=it;aiPrefs.edit().putBoolean(AiAutoSave.ALIGN_KEY,it).apply()})
+                        }
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){Text("매칭률이 낮으면 검토 대기");Text("원문 매칭 줄 80% 미만은 수동 검토",fontSize=12.sp)}
+                            Switch(reviewUncertain,{reviewUncertain=it;aiPrefs.edit().putBoolean(AiAutoSave.REVIEW_UNCERTAIN_KEY,it).apply()},enabled=autoSaveAlign)
+                        }
+                        HorizontalDivider()
                         Text("AI 분석 성능 설정",fontSize=18.sp)
                         AiPerformance.models.forEach{spec->
                             Row(verticalAlignment=Alignment.CenterVertically){

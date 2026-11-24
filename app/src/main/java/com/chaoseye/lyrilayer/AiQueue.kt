@@ -86,14 +86,32 @@ internal object AiQueue {
                         val elapsed=android.os.SystemClock.elapsedRealtime()-started
                         completedCount++;elapsedTotal+=elapsed
                         val resultMessage=if(kind==AiQueueRules.ALIGN)"매칭 "+(marks.size-uncertain)+"/"+marks.size+"줄 · 검토 필요" else "AI 생성 가사 · 검토 필요"
-                        dao.update(item.copy(kind=kind,state="review",draft=draft,plain=plain,baseline=AiQueueRules.fingerprint(before),uncertain=uncertain,message=resultMessage+" · "+AiPerformance.time(elapsed)))
+                        val result=item.copy(kind=kind,state="review",draft=draft,plain=plain,baseline=AiQueueRules.fingerprint(before),uncertain=uncertain,message=resultMessage+" · "+AiPerformance.time(elapsed))
+                        // Persist the review draft before attempting automatic registration.
+                        mutex.withLock {
+                            dao.update(result)
+                            val prefs=c.getSharedPreferences("settings",Context.MODE_PRIVATE)
+                            val allowed=AiAutoSave.allowed(kind,
+                                prefs.getBoolean(AiAutoSave.EXTRACT_KEY,AiAutoSave.DEFAULT_ENABLED),
+                                prefs.getBoolean(AiAutoSave.ALIGN_KEY,AiAutoSave.DEFAULT_ENABLED),
+                                prefs.getBoolean(AiAutoSave.REVIEW_UNCERTAIN_KEY,AiAutoSave.DEFAULT_ENABLED),
+                                if(kind==AiQueueRules.ALIGN)marks.size else heard.size,uncertain)
+                            if(allowed){
+                                try{saveResult(c,dao,result,draft,true)}
+                                catch(e:CancellationException){throw e}
+                                catch(e:Exception){
+                                    // Keep a successful analysis available for manual review on save failure.
+                                    dao.update(result.copy(message=("자동 저장 보류: "+(e.message?:"저장 오류")).take(300)))
+                                }
+                            }
+                        }
                         _live.update{old->old.copy(completedCount=completedCount,elapsedTotal=elapsedTotal)}
                     }catch(e:CancellationException){throw e}
                     catch(e:Exception){dao.update(item.copy(state="failed",message=(e.message?:"분석 실패").take(300)))}
                     catch(e:LinkageError){dao.update(item.copy(state="failed",message="AI 엔진 오류"))}
                     active=null
                 }
-                _notice.value="대기열 처리 종료 · 결과를 검토해 주세요."
+                _notice.value="대기열 처리 종료 · 저장 및 검토 결과를 확인하세요."
             }catch(e:CancellationException){_notice.value="분석 중지 · 남은 곡은 다시 시작할 수 있습니다.";throw e}
             catch(e:Exception){_notice.value="대기열 오류: "+e.message}
             finally {
@@ -110,6 +128,24 @@ internal object AiQueue {
     private fun mutate(context:Context, action:suspend(AiQueueDao)->Unit){
         scope.launch { try{mutex.withLock{val c=context.applicationContext;init(c);action(AiQueueDb.get(c).dao())}}catch(e:CancellationException){throw e}catch(e:Exception){_notice.value="대기열 변경 실패: "+e.message} }
     }
+    // Called under queue mutex; use the existing lyrics DB transaction to prevent races with edits/searches.
+    private suspend fun saveResult(c:Context,queue:AiQueueDao,item:AiQueueEntry,raw:String,automatic:Boolean){
+        val parsed=Lrc.parse(raw)
+        if(parsed.none{it.text.isNotBlank()})error("유효한 LRC 가사가 없습니다.")
+        if(item.kind==AiQueueRules.ALIGN&&parsed.map{it.text}!=PlainSync.rows(item.plain))error("자동 싱크는 원본 가사 순서와 문장을 유지해야 합니다.")
+        val result=Lyric(item.key,if(item.kind==AiQueueRules.ALIGN)item.plain else parsed.joinToString("\n"){it.text},raw,if(item.kind==AiQueueRules.ALIGN)PlainSync.AI_SOURCE else LyricDisplay.AI_SOURCE,"FOUND",edited=true)
+        val db=LyricsDb.get(c)
+        db.withTransaction {
+            val old=db.dao().get(item.key)
+            // Idempotent if the lyrics write succeeded before a process interruption in the separate queue DB.
+            if(AiQueueRules.fingerprint(old)!=AiQueueRules.fingerprint(result)){
+                if(AiQueueRules.fingerprint(old)!=item.baseline)error("분석 후 기존 가사가 변경되어 저장하지 않았습니다.")
+                db.dao().put(result)
+            }
+        }
+        queue.update(item.copy(state="saved",draft="",message=if(automatic)"자동 저장 완료" else "검토 후 저장 완료"))
+        Playback.retry.value++
+    }
     fun approve(context:Context,key:String,editedDraft:String){
         val c=context.applicationContext
         scope.launch {
@@ -117,16 +153,8 @@ internal object AiQueue {
                 init(c)
                 val queue=AiQueueDb.get(c).dao(); val item=queue.get(key)?:return@withLock
                 if(item.state!="review")return@withLock
-                val parsed=Lrc.parse(editedDraft)
-                if(parsed.none{it.text.isNotBlank()})error("유효한 LRC 가사가 없습니다.")
-                if(item.kind==AiQueueRules.ALIGN&&parsed.map{it.text}!=PlainSync.rows(item.plain))error("자동 싱크는 원본 가사 순서와 문장을 유지해야 합니다.")
-                val db=LyricsDb.get(c)
-                db.withTransaction {
-                    val old=db.dao().get(key)
-                    if(AiQueueRules.fingerprint(old)!=item.baseline)error("분석 후 기존 가사가 변경되었습니다. 기존 데이터를 보호하기 위해 저장하지 않습니다.")
-                    db.dao().put(Lyric(key,if(item.kind==AiQueueRules.ALIGN)item.plain else parsed.joinToString("\n"){it.text},editedDraft,if(item.kind==AiQueueRules.ALIGN)PlainSync.AI_SOURCE else LyricDisplay.AI_SOURCE,"FOUND",edited=true))
-                }
-                queue.update(item.copy(state="saved",draft="",message="검토 후 저장 완료"));Playback.retry.value++;_notice.value="가사 저장 완료"
+                saveResult(c,queue,item,editedDraft,false)
+                _notice.value="가사 저장 완료"
             }}catch(e:CancellationException){throw e}catch(e:Exception){_notice.value="저장 실패: "+e.message}
         }
     }
