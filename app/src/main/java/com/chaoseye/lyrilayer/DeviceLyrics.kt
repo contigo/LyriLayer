@@ -66,7 +66,7 @@ object DeviceLyrics {
             }finally{tmp.delete()}
         }
     }
-    suspend fun extract(c:Context,t:Track,language:String,progress:(Int,String)->Unit):String=lock.withLock{
+    suspend fun extract(c:Context,t:Track,language:String,preview:(String)->Unit={},progress:(Int,String)->Unit):String=lock.withLock{
         withContext(Dispatchers.IO){
             if(t.excluded||t.uri.isBlank()||MusicRules.excluded("",t.fileName,t.title))throw IOException("분석할 음악 파일이 없습니다")
             if(!supported()||!ready(c))throw IOException("설정에서 AI 모델을 먼저 다운로드하세요")
@@ -87,8 +87,15 @@ object DeviceLyrics {
                     progress(start*100/pcm.size,"보컬 음성 인식")
                     val part=NativeWhisper.decode(handle,pcm.copyOfRange(start,end),minOf(4,Runtime.getRuntime().availableProcessors()),language,start.toLong()*1000/16000)
                         ?:throw IOException("AI 음성 인식 실패")
-                    output.append(part.toString(Charsets.UTF_8))
+                    currentCoroutineContext().ensureActive()
+                    val text=part.toString(Charsets.UTF_8).trim()
+                    if(text.isNotBlank()){
+                        if(output.isNotEmpty())output.append('\n')
+                        output.append(text).append('\n')
+                    }
                     start=end
+                    preview(output.toString())
+                    progress(start*100/pcm.size,"분석 구간 완료")
                 }
                 currentCoroutineContext().ensureActive()
                 if(Lrc.parse(output.toString()).isEmpty())throw IOException("인식된 가사가 없습니다")
