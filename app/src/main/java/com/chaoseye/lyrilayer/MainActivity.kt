@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun Screen() {
         val tick=refresh.intValue
+        val updateSupported=remember{AppUpdates.supported(this)}
+        val updateState by AppUpdates.state.collectAsStateWithLifecycle()
+        LaunchedEffect(Unit){if(updateSupported)AppUpdates.check(this@MainActivity,automatic=true)}
         val audioPermission=FloatingPermissions.audioName()
         val allowed=FloatingPermissions.audioGranted(this)
         val db=remember { LyricsDb.get(this) }
@@ -191,6 +194,9 @@ class MainActivity : ComponentActivity() {
                         }
 
                     Text("변경한 위치는 자동 저장되며, 음악 재생 중인 플로팅에도 바로 반영됩니다.",fontSize=14.sp,color=neutralColor)
+                }else if(page==2&&settingsScreen=="update"&&updateSupported){
+                    Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")};Text("앱 업데이트",fontSize=22.sp)}
+                    UpdateScreen(this@MainActivity)
                 }else if(page==2&&settingsScreen=="test"){
                     Row(verticalAlignment=Alignment.CenterVertically){
                         TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")}
@@ -214,6 +220,12 @@ class MainActivity : ComponentActivity() {
                 Text("LyriLayer",style=MaterialTheme.typography.headlineMedium,fontSize=30.sp)
                 when(page) {
                     0 -> {
+                        if(updateSupported&&(updateState.stage=="available"||updateState.stage=="ready")){
+                            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                Text("새 업데이트 "+updateState.release?.tag.orEmpty(),modifier=Modifier.weight(1f),fontSize=14.sp)
+                                TextButton(onClick={page=2;settingsScreen="update"}){Text(if(updateState.stage=="ready")"설치" else "확인")}
+                            }
+                        }
                         val found=tracks.count { LyricDisplay.registered(map[it.key]?.status) }
                         val aiCount=tracks.count { LyricDisplay.aiGenerated(map[it.key]?.status,map[it.key]?.source) }
                         Text(buildAnnotatedString {
@@ -370,6 +382,18 @@ class MainActivity : ComponentActivity() {
                         HorizontalDivider()
                         Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 LRCLIB에 전송합니다. 음악 파일이나 알림은 전송하지 않습니다.")
                         HorizontalDivider()
+                        if(updateSupported){
+                            OutlinedButton(onClick={settingsScreen="update"},modifier=Modifier.fillMaxWidth()){
+                                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                    Column(Modifier.weight(1f)){
+                                        Text("앱 업데이트",fontSize=16.sp)
+                                        Text("현재 "+AppUpdates.current(this@MainActivity)+(if(updateState.release!=null)" · "+updateState.release?.tag.orEmpty() else ""),fontSize=12.sp,color=neutralColor)
+                                    }
+                                    Text("›",fontSize=24.sp)
+                                }
+                            }
+                            HorizontalDivider()
+                        }
                         Text("온디바이스 AI 가사",style=MaterialTheme.typography.titleLarge)
                         Text(if(modelReady)"Whisper Base 모델 준비됨" else "모델 최초 1회 다운로드 (약 57 MiB). 이후 음원은 기기에서만 분석합니다.")
                         Button(enabled=!modelBusy&&DeviceLyrics.supported(),onClick={scope.launch {
