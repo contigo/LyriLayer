@@ -13,13 +13,13 @@ import java.util.concurrent.TimeUnit
 object Repository {
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build()
     private val gate=Mutex()
-    private const val MISS="LRCLIB-v2"
+    private const val MISS="LRCLIB-v3"
     private fun text(j:JSONObject,k:String)=if(j.isNull(k))"" else j.optString(k)
     private suspend fun request(endpoint:String,params:Map<String,String>):String? {
         currentCoroutineContext().ensureActive()
-        val url=("https://lrclib.net/api/"+endpoint).toHttpUrl().newBuilder().apply{params.filterValues{it.isNotBlank()}.forEach{(k,v)->addQueryParameter(k,v)}}.build()
+        val url=("https://lrclib.net/api/"+endpoint).toHttpUrl().newBuilder().apply{params.filter{(k,v)->v.isNotBlank()||k=="album_name"}.forEach{(k,v)->addQueryParameter(k,v)}}.build()
         try {
-            return client.newCall(Request.Builder().url(url).header("User-Agent","LyriLayer/0.1.1 (https://github.com/contigo/LyriLayer)").header("Accept","application/json").build()).execute().use{r->
+            return client.newCall(Request.Builder().url(url).header("User-Agent","LyriLayer/0.1.4 (https://github.com/contigo/LyriLayer)").header("Accept","application/json").build()).execute().use{r->
                 when {
                     r.code==404 -> null
                     r.code==429||r.code==503 -> throw IOException("가사 서버 사용량 제한 (HTTP ${r.code})")
@@ -47,7 +47,7 @@ object Repository {
         if(ids.isEmpty())return null
         val candidates=linkedMapOf<String,Candidate>()
         var error:IOException?=null
-        suspend fun safe(endpoint:String,params:Map<String,String>):String? = try{request(endpoint,params)}catch(e:CancellationException){throw e}catch(e:IOException){error=e;if(e.message?.contains("사용량 제한")==true)throw e;null}
+        suspend fun safe(endpoint:String,params:Map<String,String>):String? = try{request(endpoint,params)}catch(e:CancellationException){throw e}catch(e:IOException){error=e;if(e.message?.contains("사용량 제한")==true||e is java.net.UnknownHostException||e is javax.net.ssl.SSLException)throw e;null}
         val id=ids.first()
         var partial:Lyric?=null
         if(id.artist.isNotBlank()&&t.duration>0){
@@ -62,8 +62,9 @@ object Repository {
         for(x in ids){
             searches+=x to mapOf("track_name" to x.title,"artist_name" to x.artist)
             if(x.artist.isNotBlank())searches+=x to mapOf("q" to "${x.title} ${x.artist}")
+            searches+=x to mapOf("track_name" to x.title)
         }
-        for((x,params) in searches.take(6)){
+        for((x,params) in searches.take(9)){
             val raw=safe("search",params)?:continue
             val a=JSONArray(raw)
             for(i in 0 until minOf(a.length(),50)){
@@ -87,6 +88,25 @@ object Repository {
         }
         error?.let{throw it}
         return null
+    }
+    data class SearchResult(val id:Long,val title:String,val artist:String,val album:String,val seconds:Double,val plain:String,val synced:String,val instrumental:Boolean)
+    suspend fun searchCandidates(query:String):List<SearchResult> = gate.withLock {
+        withContext(Dispatchers.IO) {
+            if(query.isBlank())return@withContext emptyList()
+            val body=request("search",mapOf("q" to query.trim()))?:return@withContext emptyList()
+            val a=JSONArray(body)
+            (0 until minOf(a.length(),20)).mapNotNull { i ->
+                val j=a.optJSONObject(i)?:return@mapNotNull null
+                val plain=text(j,"plainLyrics");val synced=text(j,"syncedLyrics").takeIf{Lrc.parse(it).isNotEmpty()}.orEmpty()
+                if(plain.isBlank()&&synced.isBlank()&&!j.optBoolean("instrumental"))return@mapNotNull null
+                SearchResult(j.optLong("id"),text(j,"trackName"),text(j,"artistName"),text(j,"albumName"),j.optDouble("duration",0.0),plain,synced,j.optBoolean("instrumental"))
+            }
+        }
+    }
+    suspend fun selectCandidate(c:Context,t:Track,r:SearchResult) {
+        val hasLyrics=r.plain.isNotBlank()||r.synced.isNotBlank()
+        // A user selection is deliberate. Preserve it from further automatic replacements.
+        LyricsDb.get(c).dao().put(Lyric(t.key,r.plain,r.synced,"LRCLIB (USER)",if(hasLyrics)"FOUND" else "INSTRUMENTAL",edited=true))
     }
     suspend fun resolve(c:Context,t:Track,force:Boolean=false):Lyric=gate.withLock{
         withContext(Dispatchers.IO){
