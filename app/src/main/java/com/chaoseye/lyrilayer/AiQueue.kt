@@ -155,6 +155,14 @@ internal object AiQueue {
             }
         }
     }
+    suspend fun clearForReset(context:Context):Int {
+        check(!_live.value.running && task?.isActive!=true) { "AI 분석을 중지한 후 초기화하세요." }
+        return mutex.withLock {
+            check(!_live.value.running && task?.isActive!=true) { "AI 분석 중에는 초기화할 수 없습니다." }
+            init(context.applicationContext)
+            AiQueueDb.get(context).dao().clearAll().also { _notice.value="AI 분석 목록 초기화 완료" }
+        }
+    }
     fun pause(){if(_live.value.running){_live.value=_live.value.copy(stopping=true,stage="현재 구간 종료 후 중지");task?.cancel()}}
     fun retry(context:Context)=mutate(context){it.retryFailed()}
     fun remove(context:Context,key:String)=mutate(context){it.remove(key)}

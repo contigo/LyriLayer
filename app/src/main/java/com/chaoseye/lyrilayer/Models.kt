@@ -14,6 +14,7 @@ data class Track(val title: String, val artist: String, val album: String, val d
 @Entity(tableName = "lyrics")
 data class Lyric(@PrimaryKey val key: String, val plain: String = "", val synced: String = "", val source: String = "", val status: String = "FOUND", val fetched: Long = System.currentTimeMillis(), val edited: Boolean = false, val offset: Long = 0)
 @Dao interface LyricsDao {
+    @Query("DELETE FROM lyrics") suspend fun clearAll(): Int
     @Query("SELECT * FROM lyrics WHERE `key` = :key") suspend fun get(key: String): Lyric?
     @Query("SELECT * FROM lyrics") fun observe(): Flow<List<Lyric>>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun put(lyric: Lyric)

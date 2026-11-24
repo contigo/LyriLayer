@@ -19,6 +19,7 @@ internal data class AiQueueEntry(
 )
 @Dao
 internal interface AiQueueDao {
+    @Query("DELETE FROM ai_queue") suspend fun clearAll(): Int
     @Query("SELECT * FROM ai_queue ORDER BY `order`, `key`") fun observe(): Flow<List<AiQueueEntry>>
     @Query("SELECT * FROM ai_queue ORDER BY `order`, `key`") suspend fun all(): List<AiQueueEntry>
     @Query("SELECT * FROM ai_queue WHERE state='pending' ORDER BY `order`, `key` LIMIT 1") suspend fun nextPending(): AiQueueEntry?

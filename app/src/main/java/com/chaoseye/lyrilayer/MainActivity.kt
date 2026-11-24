@@ -150,7 +150,14 @@ class MainActivity : ComponentActivity() {
         }
         val work=remember { WorkManager.getInstance(this) }
         val jobs by remember { work.getWorkInfosForUniqueWorkFlow(BatchWorker.NAME) }.collectAsStateWithLifecycle(initialValue=emptyList())
-        val job=jobs.firstOrNull { !it.state.isFinished } ?: jobs.firstOrNull()
+        var resetConfirm by remember { mutableStateOf(false) }
+        var resetBusy by remember { mutableStateOf(false) }
+        var resetStatus by remember { mutableStateOf("") }
+        var hiddenBatchIds by remember { mutableStateOf(getSharedPreferences("batch_progress",MODE_PRIVATE).getStringSet("reset_hidden_ids",emptySet())?.toSet().orEmpty()) }
+        val visibleJobs=jobs.filter { it.id.toString() !in hiddenBatchIds }
+        val job=visibleJobs.firstOrNull { !it.state.isFinished } ?: visibleJobs.firstOrNull()
+        val resetAllowed=!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
+        BackHandler(enabled=resetBusy) { }
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
         var showMissingOverlay by remember { mutableStateOf(prefs.getBoolean(OverlayContent.SHOW_MISSING,true)) }
@@ -438,6 +445,14 @@ class MainActivity : ComponentActivity() {
                             }
                             HorizontalDivider()
                         }
+                        Text("데이터 관리",style=MaterialTheme.typography.titleLarge)
+                        OutlinedButton(enabled=resetAllowed,onClick={resetConfirm=true;resetStatus=""},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.outlinedButtonColors(contentColor=MaterialTheme.colorScheme.error)){
+                            Text("DB 초기화")
+                        }
+                        Text("저장된 가사, 싱크, 검색 기록 및 AI 분석 목록을 삭제합니다. 음악 파일, 외부 LRC, AI 모델 및 앱 설정은 유지됩니다.",fontSize=12.sp)
+                        if(!resetAllowed&&!resetBusy)Text("음악 재생, 가사 검색 및 AI 분석/일괄 수집을 중지한 후 초기화하세요.",fontSize=12.sp,color=neutralColor)
+                        if(resetStatus.isNotBlank())Text(resetStatus,fontSize=14.sp)
+                        HorizontalDivider()
                         Text("온디바이스 AI 가사",style=MaterialTheme.typography.titleLarge)
                         val performanceBusy=modelBusy||aiRunning||queuedLive.running||activeAnalysis!=null
                         Text("AI 분석 결과 저장 설정",fontSize=18.sp)
@@ -487,6 +502,41 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        if(resetConfirm||resetBusy)AlertDialog(
+            onDismissRequest={if(!resetBusy)resetConfirm=false},
+            title={Text(if(resetBusy)"DB 초기화 중" else "DB를 초기화하시겠습니까?")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Text("저장된 일반/싱크 가사와 직접 편집한 가사, AI 생성 가사, 분석 대기열 및 수집 기록이 삭제됩니다. 복구할 수 없습니다.")
+                Text("음악 파일, 외부 LRC, 다운로드한 AI 모델과 앱 설정은 삭제하지 않습니다.")
+                Text("초기화 후 음악을 재생하거나 검색하면 가사가 다시 등록될 수 있습니다.",fontSize=12.sp)
+                if(resetBusy)LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+            }},
+            confirmButton={TextButton(enabled=resetAllowed,onClick={
+                resetBusy=true
+                scope.launch{
+                    try{
+                        check(!Playback.now.value.playing && !AiQueue.live.value.running && DeviceLyrics.activeAnalysis.value==null){"재생 및 AI 분석을 먼저 중지하세요."}
+                        val activeJobs=withContext(Dispatchers.IO){work.getWorkInfosForUniqueWork(BatchWorker.NAME).get()}
+                        check(activeJobs.none{!it.state.isFinished}){"가사 일괄 수집을 먼저 중지하세요."}
+                        withContext(NonCancellable){
+                            val queueCount=AiQueue.clearForReset(this@MainActivity)
+                            val lyricCount=Repository.clearForReset(this@MainActivity)
+                            val ids=activeJobs.map{it.id.toString()}.toSet()
+                            withContext(Dispatchers.IO){
+                                check(getSharedPreferences("batch_progress",MODE_PRIVATE).edit().clear().putStringSet("reset_hidden_ids",ids).commit()){"수집 기록 초기화 실패"}
+                            }
+                            hiddenBatchIds=ids
+                            clearAi();edit=null;syncTrack=null;manualSearch=null
+                            message="";messageStatus="IDLE"
+                            resetStatus="초기화 완료 · 가사 "+lyricCount+"개, AI 목록 "+queueCount+"개 삭제"
+                        }
+                    }catch(e:CancellationException){throw e}
+                    catch(e:Exception){resetStatus="초기화 오류 (일부 삭제되었을 수 있음): "+e.message}
+                    finally{resetBusy=false;resetConfirm=false}
+                }
+            }){Text("초기화",color=MaterialTheme.colorScheme.error)}},
+            dismissButton={TextButton(enabled=!resetBusy,onClick={resetConfirm=false}){Text("취소")}}
+        )
         missing?.let { access ->
             AlertDialog(
                 onDismissRequest={permissionPass=false},

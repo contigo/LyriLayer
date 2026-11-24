@@ -119,6 +119,7 @@ object Repository {
         // A user selection is deliberate. Preserve it from further automatic replacements.
         LyricsDb.get(c).dao().put(Lyric(t.key,r.plain,r.synced,"LRCLIB (USER)",if(hasLyrics)"FOUND" else "INSTRUMENTAL",edited=true))
     }
+    suspend fun clearForReset(c:Context):Int=gate.withLock { LyricsDb.get(c).dao().clearAll() }
     suspend fun resolve(c:Context,t:Track,force:Boolean=false):Lyric=gate.withLock{
         withContext(Dispatchers.IO){
             if(t.excluded||MusicRules.excluded("",t.fileName,t.title))throw IOException("녹음 파일은 검색하지 않습니다")
