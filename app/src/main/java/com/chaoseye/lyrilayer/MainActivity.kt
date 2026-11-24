@@ -150,6 +150,7 @@ class MainActivity : ComponentActivity() {
         }
         val work=remember { WorkManager.getInstance(this) }
         val jobs by remember { work.getWorkInfosForUniqueWorkFlow(BatchWorker.NAME) }.collectAsStateWithLifecycle(initialValue=emptyList())
+        var searchLogOpen by remember { mutableStateOf(false) }
         var resetConfirm by remember { mutableStateOf(false) }
         var resetBusy by remember { mutableStateOf(false) }
         var resetStatus by remember { mutableStateOf("") }
@@ -313,6 +314,7 @@ class MainActivity : ComponentActivity() {
                                         withStyle(SpanStyle(color=failureColor)){append("오류 ${data.getInt("errors",0)}")}
                                     },style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                                     data.getString("current")?.takeIf{it.isNotBlank()&&!job.state.isFinished}?.let{Text("검색 중: $it",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
+                                    if(data.getInt("retryPending",0)>0)Text("자동 재검색 예정 "+data.getInt("retryPending",0)+"곡",fontSize=13.sp)
                                     data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
                                     if(!job.state.isFinished) TextButton(onClick={work.cancelUniqueWork(BatchWorker.NAME)}){Text("수집 중단",fontSize=16.sp)}
                                 }
@@ -445,6 +447,9 @@ class MainActivity : ComponentActivity() {
                             }
                             HorizontalDivider()
                         }
+                        OutlinedButton(onClick={searchLogOpen=true},modifier=Modifier.fillMaxWidth()){Text("가사 수집 오류 기록")}
+                        Text("최근 일괄 수집에서 발생한 제공처별 오류를 확인합니다.",fontSize=12.sp)
+                        HorizontalDivider()
                         Text("데이터 관리",style=MaterialTheme.typography.titleLarge)
                         OutlinedButton(enabled=resetAllowed,onClick={resetConfirm=true;resetStatus=""},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.outlinedButtonColors(contentColor=MaterialTheme.colorScheme.error)){
                             Text("DB 초기화")
@@ -501,6 +506,14 @@ class MainActivity : ComponentActivity() {
                 }
                 }
             }
+        }
+        if(searchLogOpen) {
+            val history=remember(searchLogOpen,jobs){getSharedPreferences("batch_progress",MODE_PRIVATE).getString("errorLog","").orEmpty()}
+            AlertDialog(onDismissRequest={searchLogOpen=false},title={Text("가사 수집 오류 기록")},text={
+                Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState())){
+                    Text(history.ifBlank{"기록된 오류가 없습니다."},fontSize=13.sp)
+                }
+            },confirmButton={TextButton(onClick={searchLogOpen=false}){Text("닫기")}})
         }
         if(resetConfirm||resetBusy)AlertDialog(
             onDismissRequest={if(!resetBusy)resetConfirm=false},

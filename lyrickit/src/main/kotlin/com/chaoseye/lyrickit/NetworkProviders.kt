@@ -4,6 +4,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
@@ -16,7 +20,30 @@ import kotlin.coroutines.resumeWithException
 
 internal class LyricsHttp(private val client: OkHttpClient = OkHttpClient.Builder()
     .callTimeout(8, TimeUnit.SECONDS).build()) {
-    suspend fun get(url: String, params: Map<String, String> = emptyMap(), headers: Map<String,String> = emptyMap()): String? =
+    private val gates = ConcurrentHashMap<String,Mutex>()
+    private val cooldown = ConcurrentHashMap<String,Long>()
+    suspend fun get(url: String, params: Map<String, String> = emptyMap(), headers: Map<String,String> = emptyMap()): String? {
+        val host = url.toHttpUrl().host
+        val key = when { host.endsWith("genie.co.kr") -> "genie"; host.endsWith("bugs.co.kr") -> "bugs"; else -> host }
+        return gates.getOrPut(key){Mutex()}.withLock {
+            repeat(3) { attempt ->
+                val wait = (cooldown[key] ?: 0L) - androidFreeMonotonicMs()
+                if(wait>0) { if(wait>5000) throw HttpFailure(429,wait); delay(wait) }
+                try { return@withLock getOnce(url,params,headers) }
+                catch(e: CancellationException){throw e}
+                catch(e: IOException){
+                    val failure=SearchFailures.classify(e)
+                    val backoff= (e as? HttpFailure)?.retryAfterMs ?: (1000L shl attempt)
+                    if(e is HttpFailure && e.status in listOf(429,503)) cooldown[key]=androidFreeMonotonicMs()+backoff.coerceIn(1000L,86400000L)
+                    if(!failure.retryable || attempt==2 || backoff>5000) throw e
+                    if(e !is HttpFailure || e.status !in listOf(429,503)) delay(backoff)
+                } finally { delay(250) }
+            }
+            error("Unreachable retry state")
+        }
+    }
+    private fun androidFreeMonotonicMs()=System.nanoTime()/1000000L
+    private suspend fun getOnce(url: String, params: Map<String,String>, headers: Map<String,String>): String? =
         suspendCancellableCoroutine { continuation ->
             val target = url.toHttpUrl().newBuilder().apply { params.forEach { (k,v) -> addQueryParameter(k,v) } }.build()
             val request = Request.Builder().url(target).header("User-Agent", "LyricKit/1.0").apply { headers.forEach { (k,v) -> header(k,v) } }.build()
@@ -25,7 +52,7 @@ internal class LyricsHttp(private val client: OkHttpClient = OkHttpClient.Builde
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) { if (continuation.isActive) continuation.resumeWithException(e) }
                 override fun onResponse(call: Call, response: Response) {
-                    try { val value = response.use { if (it.code == 404) null else if (!it.isSuccessful) throw IOException("HTTP ${it.code}") else it.body?.string() ?: throw IOException("Empty response") }; if (continuation.isActive) continuation.resume(value) }
+                    try { val value = response.use { if (it.code == 404) null else if (!it.isSuccessful) throw HttpFailure(it.code,it.header("Retry-After")?.trim()?.toLongOrNull()?.coerceIn(0,86400)?.times(1000)) else it.body?.string() ?: throw IOException("Empty response") }; if (continuation.isActive) continuation.resume(value) }
                     catch (e: Exception) { if (continuation.isActive) continuation.resumeWithException(e) }
                 }
             })

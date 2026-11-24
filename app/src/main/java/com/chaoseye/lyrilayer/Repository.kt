@@ -10,6 +10,7 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+internal class OnlineSearchException(message:String,val retryable:Boolean):IOException(message)
 object Repository {
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build()
     private val gate=Mutex()
@@ -93,11 +94,24 @@ object Repository {
         val primary = LyricKitBridge.lookup(t)
         val candidate = LyricKitBridge.toLyric(t, primary)
         if (candidate?.synced?.isNotBlank() == true) return candidate
-        val legacy = try { legacyOnline(t) } catch(e: CancellationException) { throw e } catch(e: Exception) { if (candidate != null) return candidate else throw e }
+        val failures = when(primary) {
+            is com.chaoseye.lyrickit.SearchOutcome.Unavailable -> primary.failures
+            is com.chaoseye.lyrickit.SearchOutcome.Found -> primary.failures
+            else -> emptyMap()
+        }
+        val details = failures.map { (provider,failure) -> com.chaoseye.lyrickit.SearchFailures.label(provider)+": "+com.chaoseye.lyrickit.SearchFailures.describe(failure) }
+        val legacy = try { legacyOnline(t) } catch(e: CancellationException) { throw e } catch(e: Exception) {
+            if (candidate != null) return candidate
+            val status=Regex("HTTP ([0-9]{3})").find(e.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+            val failure=com.chaoseye.lyrickit.SearchFailures.classify(if(status!=null)com.chaoseye.lyrickit.HttpFailure(status) else e)
+            throw OnlineSearchException((details + ("LRCLIB: "+com.chaoseye.lyrickit.SearchFailures.describe(failure))).joinToString(" / "),failure.retryable||failures.values.any{it.retryable})
+        }
         if (legacy?.synced?.isNotBlank() == true) return legacy
         if (candidate != null) return candidate
         if (legacy != null) return legacy
-        if (primary is com.chaoseye.lyrickit.SearchOutcome.Unavailable) throw IOException("온라인 가사 검색 일부 제공처 오류")
+        if (primary is com.chaoseye.lyrickit.SearchOutcome.Unavailable) throw OnlineSearchException(
+            details.ifEmpty { primary.failedProviders.map { com.chaoseye.lyrickit.SearchFailures.label(it)+": 검색 실패" } }.joinToString(" / "),
+            failures.values.any { it.retryable })
         return null
     }
     data class SearchResult(val id:Long,val title:String,val artist:String,val album:String,val seconds:Double,val plain:String,val synced:String,val instrumental:Boolean)

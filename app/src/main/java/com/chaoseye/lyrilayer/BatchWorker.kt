@@ -19,9 +19,13 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
         var missing=if(same)prefs.getInt("missing",0) else 0
         var errors=if(same)prefs.getInt("errors",0) else 0
         var lastError=if(same)prefs.getString("lastError","").orEmpty() else ""
-        fun snapshot(current:String="",finished:Boolean=false)=workDataOf("done" to done,"total" to tracks.size,"found" to found,"missing" to missing,"errors" to errors,"lastError" to lastError,"current" to current.take(180),"finished" to finished)
+        val retryUris=if(same)prefs.getStringSet("retryUris",emptySet()).orEmpty().toMutableSet() else mutableSetOf<String>()
+        var retryDone=if(same)prefs.getInt("retryDone",0) else 0
+        val log=if(same)prefs.getString("errorLog","").orEmpty().lines().filter{it.isNotBlank()}.toMutableList() else mutableListOf<String>()
+        fun record(t:Track,error:String){lastError=error.take(250);log.add((t.title.take(70)+" · "+lastError).take(180));while(log.size>20)log.removeAt(0)}
+        fun snapshot(current:String="",finished:Boolean=false)=workDataOf("done" to done,"total" to tracks.size,"found" to found,"missing" to missing,"errors" to errors,"lastError" to lastError,"current" to current.take(180),"finished" to finished,"retryPending" to retryUris.size,"errorLog" to log.takeLast(15).joinToString("\n"))
         fun checkpoint(){
-            prefs.edit().putString("id",id.toString()).putString("fingerprint",fingerprint).putInt("done",done).putInt("total",tracks.size).putInt("found",found).putInt("missing",missing).putInt("errors",errors).putString("lastError",lastError).commit()
+            prefs.edit().putString("id",id.toString()).putString("fingerprint",fingerprint).putInt("done",done).putInt("total",tracks.size).putInt("found",found).putInt("missing",missing).putInt("errors",errors).putString("lastError",lastError).putStringSet("retryUris",retryUris.toSet()).putInt("retryDone",retryDone).putString("errorLog",log.joinToString("\n")).commit()
         }
         checkpoint()
         setProgress(snapshot())
@@ -33,14 +37,31 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
             val t=tracks[done]
             setProgress(snapshot("${t.artist} - ${t.title}"))
             try {
-                val l=withTimeout(45_000){Repository.resolve(applicationContext,t)}
+                val l=withTimeout(65_000){Repository.resolve(applicationContext,t)}
                 if(l.status=="NOT_FOUND")missing++ else found++
-            } catch(e:TimeoutCancellationException){errors++;lastError="검색 시간 초과"}
+            } catch(e:TimeoutCancellationException){errors++;retryUris.add(t.uri);record(t,"검색 시간 초과")}
             catch(e:CancellationException){throw e}
-            catch(e:Exception){errors++;lastError=e.message.orEmpty().take(250)}
+            catch(e:Exception){errors++;if(e is OnlineSearchException && e.retryable)retryUris.add(t.uri);record(t,e.message.orEmpty())}
             done++
             checkpoint()
             setProgress(snapshot())
+        }
+        val byUri=tracks.associateBy{it.uri}
+        for(uri in retryUris.toList()){
+            currentCoroutineContext().ensureActive()
+            if(SystemClock.elapsedRealtime()-start>6*60*1000L){checkpoint();return Result.retry()}
+            val t=byUri[uri]
+            if(t==null){retryUris.remove(uri);checkpoint();continue}
+            delay(2000)
+            setProgress(snapshot("실패 곡 재검색: "+t.title))
+            try {
+                val l=withTimeout(65_000){Repository.resolve(applicationContext,t,true)}
+                errors=(errors-1).coerceAtLeast(0)
+                if(l.status=="NOT_FOUND")missing++ else found++
+            }catch(e:TimeoutCancellationException){record(t,"재검색 시간 초과")}
+            catch(e:CancellationException){throw e}
+            catch(e:Exception){record(t,e.message.orEmpty())}
+            retryUris.remove(uri);retryDone++;checkpoint();setProgress(snapshot())
         }
         return Result.success(snapshot(finished=true))
     }
@@ -49,7 +70,7 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
         fun savedProgress(c:Context,id:String):Data {
             val p=c.getSharedPreferences("batch_progress",Context.MODE_PRIVATE)
             if(p.getString("id","")!=id)return Data.EMPTY
-            return workDataOf("done" to p.getInt("done",0),"total" to p.getInt("total",0),"found" to p.getInt("found",0),"missing" to p.getInt("missing",0),"errors" to p.getInt("errors",0),"lastError" to p.getString("lastError","").orEmpty())
+            return workDataOf("done" to p.getInt("done",0),"total" to p.getInt("total",0),"found" to p.getInt("found",0),"missing" to p.getInt("missing",0),"errors" to p.getInt("errors",0),"lastError" to p.getString("lastError","").orEmpty(),"retryPending" to p.getStringSet("retryUris",emptySet()).orEmpty().size,"errorLog" to p.getString("errorLog","").orEmpty().takeLast(2700))
         }
         fun start(c:Context) {
             val request=OneTimeWorkRequestBuilder<BatchWorker>()

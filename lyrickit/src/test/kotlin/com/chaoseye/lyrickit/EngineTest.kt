@@ -7,6 +7,18 @@ import java.io.IOException
 
 class EngineTest {
     private val song = SongInfo("노래", "가수", durationMs = 180000)
+    @Test fun providerFailureDetails() = runBlocking {
+        val failed=object:LyricsProvider{
+            override val source=Provider.GENIE
+            override suspend fun search(song:SongInfo):List<TrackCandidate> { throw HttpFailure(429,1000) }
+            override suspend fun lyrics(candidate:TrackCandidate):LyricsResult?=null
+        }
+        val outcome=LyricKit(listOf(failed)).searchDetailed(song) as SearchOutcome.Unavailable
+        assertEquals(429,outcome.failures[Provider.GENIE]?.httpStatus)
+        assertTrue(outcome.failures[Provider.GENIE]?.retryable==true)
+        assertFalse(SearchFailures.classify(HttpFailure(403)).retryable)
+        assertTrue(SearchFailures.classify(java.net.SocketTimeoutException()).retryable)
+    }
     @Test fun match() {
         assertEquals(95f, LyricsMatcher.score(song, song), 0f)
         assertEquals(0f, LyricsMatcher.score(song, song.copy(artist="다른 가수")), 0f)
