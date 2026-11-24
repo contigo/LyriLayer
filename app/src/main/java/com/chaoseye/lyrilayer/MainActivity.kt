@@ -92,6 +92,11 @@ class MainActivity : ComponentActivity() {
         var queueScreen by rememberSaveable { mutableStateOf(false) }
         BackHandler(enabled=page==0&&queueScreen){queueScreen=false}
         val queuedLive by AiQueue.live.collectAsStateWithLifecycle()
+        val queueDao=remember{AiQueueDb.get(this@MainActivity).dao()}
+        val queuedEntries by remember{queueDao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
+        val queuedProgress=remember(queuedEntries,queuedLive.key,queuedLive.percent){
+            AiQueueProgress.calculate(queuedEntries,queuedLive.key,queuedLive.percent)
+        }
         BackHandler(enabled=page==2&&settingsScreen!="main"){settingsScreen="main"}
         var edit by remember { mutableStateOf<Track?>(null) }
         var syncTrack by remember { mutableStateOf<Track?>(null) }
@@ -271,7 +276,7 @@ class MainActivity : ComponentActivity() {
                             OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침",fontSize=16.sp) }
                         }
                         OutlinedButton(onClick={queueScreen=true},modifier=Modifier.fillMaxWidth()){
-                            Text(if(queuedLive.running)"✦ AI 분석 목록 · 처리 중 "+queuedLive.percent+"%" else "✦ AI 분석 목록 / 일괄 분석",fontSize=16.sp)
+                            Text(if(queuedLive.running)"✦ AI 분석 목록 · 처리 중 "+queuedProgress.percent+"%" else "✦ AI 분석 목록 / 일괄 분석",fontSize=16.sp)
                         }
                         if(job!=null) {
                             val data=when{

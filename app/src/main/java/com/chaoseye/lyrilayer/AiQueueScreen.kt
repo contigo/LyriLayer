@@ -37,8 +37,9 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
     val availablePlain=candidates.count{it.second==AiQueueRules.ALIGN}
     val visibleEntries=remember(entries,filter){AiQueueRules.filtered(entries,filter)}
     val pending=entries.count{it.state=="pending"}
-    val done=entries.count{it.state in setOf("review","saved","failed","skipped")}
-    val percent=if(entries.isEmpty())0 else ((done*100L+if(entries.any{it.key==live.key&&it.state=="running"})live.percent else 0)/entries.size).toInt().coerceIn(0,100)
+    val progress=remember(entries,live.key,live.percent){AiQueueProgress.calculate(entries,live.key,live.percent)}
+    val done=progress.done
+    val percent=progress.percent
     Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick=onBack){Text("‹ 뒤로")};Text("AI 분석 목록",fontSize=24.sp)}
     Text("대상: 가사 없음 "+missing+"곡 · 일반 가사 "+plain+"곡",fontSize=14.sp)
     Text("추가 가능: 가사 없음 "+availableMissing+"곡 · 일반 가사 "+availablePlain+"곡",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
