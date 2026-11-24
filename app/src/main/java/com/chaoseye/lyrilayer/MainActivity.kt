@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
                         if(job!=null) {
                             val data=when{
                                 job.state==WorkInfo.State.SUCCEEDED || job.state==WorkInfo.State.FAILED -> job.outputData
-                                job.progress.hasKeyWithValueOfType<Int>("total") -> job.progress
+                                job.progress.getInt("total",-1)>=0 -> job.progress
                                 else -> BatchWorker.savedProgress(this@MainActivity,job.id.toString())
                             }
                             val done=data.getInt("done",0);val total=data.getInt("total",0)
