@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: lyrilayer-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -47,3 +51,27 @@ jobs:
           path: artifacts/LyriLayer-debug.apk
           retention-days: 7
           if-no-files-found: error
+      - name: Publish verified APK to GitHub Releases
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          TAG="v$VERSION"
+          APK="artifacts/LyriLayer-debug.apk"
+          test -s "$APK"
+          unzip -tq "$APK"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Keeping published APK unchanged; increment versionName for a new release."
+            exit 0
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG exists without a release. Refusing to publish against an unverified tag."
+            exit 1
+          fi
+          NOTES="$(printf 'Automated Android test release.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- Debug-signed APK; real-device validation pending.\n- Updates require the same APK signing certificate.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$GH_REPO" "$GITHUB_RUN_ID")"
+          gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "LyriLayer $TAG" --notes "$NOTES" --prerelease
