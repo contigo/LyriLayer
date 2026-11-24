@@ -1,4 +1,4 @@
-# LyriLayer 0.1.4
+# LyriLayer 0.1.5
 
 삼성 뮤직 전용 읽기 전용 가사 도우미. 재생/정지/탐색 등 음악 제어 없음.
 
@@ -51,3 +51,9 @@ Apache License 2.0 (LICENSE).
 - 가사 수집 진행률, 처리/성공/없음/오류, 현재 곡, 중단 상태 표시. 긴 작업은 체크포인트를 저장하고 이어서 처리.
 - 제목만 검색하는 LRCLIB 대체 경로와 수동 검색 결과 선택, Google 브라우저 검색 및 명시적 클립보드 붙여넣기.
 - Google 검색 결과를 자동 스크래핑하지 않습니다. 100%는 전체 처리 완료이며 가사 확보율과 별개입니다.
+
+## v0.1.5
+- ARM64 Android 온디바이스 Whisper.cpp v1.7.6, 다국어 base-q5_1 (57 MiB, SHA-256 검증 후 설치). 설정에서 모델 다운로드 → 곡의 직접 검색 → 기기에서 AI 가사 추출 → 검토 후 저장. 음원을 서버에 전송하지 않음.
+- MediaCodec 디코딩, 16 kHz 모노 PCM, 25초 단위 AI 추론, LRC 타임스탬프. 최대 12분, 앱을 열어 두어야 함. 보컬 분리 미구현; 노래 인식 정확도와 실제 기기 성능 미검증.
+- 로컬 LRC (접근 가능한 경로), MP3 ID3 USLT/ULT 및 FLAC LYRICS 태그, SAF 파일 가져오기. M4A 내장 가사 및 SYLT 태그는 후속 지원 예정.
+- Whisper.cpp 및 Whisper 모델 MIT 라이선스: https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/LICENSE ; https://huggingface.co/ggerganov/whisper.cpp .

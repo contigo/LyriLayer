@@ -13,13 +13,13 @@ import java.util.concurrent.TimeUnit
 object Repository {
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build()
     private val gate=Mutex()
-    private const val MISS="LRCLIB-v3"
+    private const val MISS="LRCLIB-v4"
     private fun text(j:JSONObject,k:String)=if(j.isNull(k))"" else j.optString(k)
     private suspend fun request(endpoint:String,params:Map<String,String>):String? {
         currentCoroutineContext().ensureActive()
         val url=("https://lrclib.net/api/"+endpoint).toHttpUrl().newBuilder().apply{params.filter{(k,v)->v.isNotBlank()||k=="album_name"}.forEach{(k,v)->addQueryParameter(k,v)}}.build()
         try {
-            return client.newCall(Request.Builder().url(url).header("User-Agent","LyriLayer/0.1.4 (https://github.com/contigo/LyriLayer)").header("Accept","application/json").build()).execute().use{r->
+            return client.newCall(Request.Builder().url(url).header("User-Agent","LyriLayer/0.1.5 (https://github.com/contigo/LyriLayer)").header("Accept","application/json").build()).execute().use{r->
                 when {
                     r.code==404 -> null
                     r.code==429||r.code==503 -> throw IOException("가사 서버 사용량 제한 (HTTP ${r.code})")
@@ -113,7 +113,7 @@ object Repository {
             if(t.excluded||MusicRules.excluded("",t.fileName,t.title))throw IOException("녹음 파일은 검색하지 않습니다")
             val dao=LyricsDb.get(c).dao();val old=dao.get(t.key)
             if(old!=null&&(old.edited||(!force&&(old.status=="FOUND"||old.status=="INSTRUMENTAL"||(old.status=="NOT_FOUND"&&old.source==MISS&&System.currentTimeMillis()-old.fetched<86400000)))))return@withContext old
-            val result=try{online(t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)}catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
+            val result=try{LocalLyrics.find(c,t)?:online(t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)}catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
             ensureActive()
             if(old?.status=="FOUND"&&(result.status!="FOUND"||(old.synced.isNotBlank()&&result.synced.isBlank())))return@withContext old
             if(dao.insert(result)==-1L)dao.updateAuto(result.key,result.plain,result.synced,result.source,result.status,result.fetched)

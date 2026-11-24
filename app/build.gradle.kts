@@ -7,12 +7,16 @@ plugins {
 android {
     namespace = "com.chaoseye.lyrilayer"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     defaultConfig {
         applicationId = "com.chaoseye.lyrilayer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_shared" } }
+        versionCode = 6
+        versionName = "0.1.5"
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
