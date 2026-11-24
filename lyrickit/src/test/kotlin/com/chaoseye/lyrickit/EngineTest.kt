@@ -21,6 +21,19 @@ class EngineTest {
         assertEquals(1234L,parseGenie("null({\"1234\":\"A &amp; B\"})").single().startTimeMs)
         assertEquals("A & B",parseGenie("null({\"1234\":\"A &amp; B\"})").single().text)
     }
+    @Test fun musixmatchParsing() {
+        val body = musixmatchBody("""{"message":{"header":{"status_code":200},"body":{"track_list":[{"track":{"track_id":42,"track_name":"노래","artist_name":"가수","track_length":180}}]}}}""")!!
+        val candidate = musixmatchTracks(body).single()
+        assertEquals("42", candidate.id)
+        assertEquals(song,candidate.song)
+        assertNull(musixmatchBody("""{"message":{"header":{"status_code":404}}}"""))
+        try {
+            musixmatchBody("""{"message":{"header":{"status_code":401}}}""")
+            fail("Unauthorized response must not be a missing lyric")
+        } catch (_: IOException) {}
+        assertFalse(Provider.MUSIXMATCH in createLyricKit().availableProviders)
+        assertTrue(Provider.MUSIXMATCH in createLyricKit("fixture-key").availableProviders)
+    }
     private fun provider(p: Provider, failure: Boolean = false, found: Boolean = true) = object: LyricsProvider {
         override val source = p
         override suspend fun search(song: SongInfo): List<TrackCandidate> {

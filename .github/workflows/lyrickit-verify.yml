@@ -33,3 +33,9 @@ jobs:
         run: gradle :lyrickit:testDebugUnitTest :app:testDebugUnitTest --stacktrace
       - name: Compile debug APK
         run: gradle :app:assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LyricKit-verification-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7

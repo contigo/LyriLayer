@@ -95,4 +95,9 @@ internal class BugsProvider(private val http: LyricsHttp) : LyricsProvider {
             ?: run { t.exceptionOrNull()?.let { throw it }; p.exceptionOrNull()?.let { throw it }; null }
     }
 }
-fun createLyricKit(): LyricKit { val http = LyricsHttp(); return LyricKit(listOf(GenieProvider(http),BugsProvider(http))) }
+fun createLyricKit(musixmatchApiKey: String? = null): LyricKit {
+    val http = LyricsHttp()
+    val providers = mutableListOf<LyricsProvider>(GenieProvider(http), BugsProvider(http))
+    musixmatchApiKey?.trim()?.takeIf { it.isNotEmpty() }?.let { providers.add(MusixmatchProvider(http,it)) }
+    return LyricKit(providers)
+}
