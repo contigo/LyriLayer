@@ -30,6 +30,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.collect
 import androidx.work.WorkManager
 import androidx.work.WorkInfo
 import androidx.compose.foundation.rememberScrollState
@@ -44,9 +48,22 @@ import kotlinx.coroutines.*
 class MainActivity : ComponentActivity() {
     private val refresh = mutableIntStateOf(0)
     private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()) { refresh.intValue++ }
+    private val updatePermission=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){
+        AppUpdates.permissionReturned(this)
+    }
+    private val updateInstaller=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){
+        AppUpdates.installerReturned(this)
+    }
     override fun onResume() { super.onResume(); refresh.intValue++ }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if(AppUpdates.supported(this))lifecycleScope.launch{
+            repeatOnLifecycle(Lifecycle.State.RESUMED){
+                AppUpdates.state.collect{
+                    AppUpdates.installIfReady(this@MainActivity,{intent->updatePermission.launch(intent)},{intent->updateInstaller.launch(intent)})
+                }
+            }
+        }
         setContent { MaterialTheme(colorScheme=if(androidx.compose.foundation.isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Screen() } }
     }
     @Composable private fun Screen() {

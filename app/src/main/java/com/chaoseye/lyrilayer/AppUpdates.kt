@@ -8,10 +8,13 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.Lifecycle
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -21,10 +24,13 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 internal data class AppRelease(val tag:String,val url:String,val size:Long,val digest:String,val notes:String)
-internal data class UpdateState(val stage:String="idle",val release:AppRelease?=null,val percent:Int=0,val message:String="")
+internal data class UpdateState(val stage:String="idle",val release:AppRelease?=null,val percent:Int=0,val message:String="",val installRequested:Boolean=false)
 internal object AppUpdates {
     const val AUTO_CHECK="update_auto_check"
     const val AUTO_DOWNLOAD="update_auto_download"
+    const val AUTO_INSTALL="update_auto_install"
+    private const val LAST_PROMPT="update_last_install_prompt"
+    private const val PENDING_PERMISSION="update_pending_install_permission"
     private val client=OkHttpClient.Builder().connectTimeout(15,TimeUnit.SECONDS).readTimeout(40,TimeUnit.SECONDS).callTimeout(5,TimeUnit.MINUTES).build()
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private val gate=Mutex()
@@ -144,23 +150,63 @@ internal object AppUpdates {
         }
         _state.value=UpdateState("ready",r,100,"다운로드 및 검증 완료")
     }
+    private fun identity(r:AppRelease)=r.tag+":"+r.digest.lowercase()
+    private fun settings(c:Context)=c.getSharedPreferences("settings",Context.MODE_PRIVATE)
     fun install(context:Context){
-        val r=_state.value.release?:return
-        if(!supported(context)||_state.value.stage!="ready")return
-        scope.launch{
-            if(!gate.tryLock())return@launch
+        val old=_state.value
+        if(supported(context)&&old.stage=="ready"&&old.release!=null)_state.value=old.copy(installRequested=true)
+    }
+    suspend fun installIfReady(activity:ComponentActivity,launchPermission:(Intent)->Unit,launchInstaller:(Intent)->Unit){
+        if(!supported(activity))return
+        gate.withLock {
+            val old=_state.value
+            val r=old.release?:return@withLock
+            val prefs=settings(activity)
+            val id=identity(r)
+            if(!AutoInstallRules.shouldStart(old.stage=="ready",activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED),
+                    old.installRequested,prefs.getBoolean(AUTO_INSTALL,true),id,prefs.getString(LAST_PROMPT,null),
+                    prefs.getString(PENDING_PERMISSION,null),activity.packageManager.canRequestPackageInstalls()))return@withLock
+            _state.value=old.copy(stage="installing",message="설치 전 APK 검증 중")
             try{
-                val file=apk(context,r)
-                withContext(Dispatchers.IO){verify(context,r,file)}
-                if(!context.packageManager.canRequestPackageInstalls()){
-                    context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+context.packageName)))
-                    _state.value=UpdateState("ready",r,100,"이 출처 허용 후 설치 버튼을 다시 누르세요.")
-                }else{
-                    val uri=FileProvider.getUriForFile(context,context.packageName+".updates",file)
-                    context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                val file=apk(activity,r)
+                withContext(Dispatchers.IO){verify(activity,r,file)}
+                currentCoroutineContext().ensureActive()
+                if(!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)||activity.isFinishing||activity.isDestroyed){
+                    _state.value=old;return@withLock
                 }
-            }catch(e:CancellationException){throw e}catch(e:Exception){_state.value=UpdateState("error",r,message=e.message?:"설치 실행 실패")}
-            finally{gate.unlock()}
+                if(!activity.packageManager.canRequestPackageInstalls()){
+                    if(!prefs.edit().putString(LAST_PROMPT,id).putString(PENDING_PERMISSION,id).commit())throw IOException("설치 상태 저장 실패")
+                    _state.value=old.copy(message="이 출처 허용 후 돌아오면 설치를 계속합니다.",installRequested=false)
+                    launchPermission(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+activity.packageName)))
+                }else{
+                    val uri=FileProvider.getUriForFile(activity,activity.packageName+".updates",file)
+                    if(!prefs.edit().putString(LAST_PROMPT,id).remove(PENDING_PERMISSION).commit())throw IOException("설치 상태 저장 실패")
+                    _state.value=old.copy(message="Android 설치 화면에서 업데이트를 확인하세요.",installRequested=false)
+                    launchInstaller(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                }
+            }catch(e:CancellationException){_state.value=old;throw e}
+            catch(e:Exception){
+                prefs.edit().remove(PENDING_PERMISSION).apply()
+                _state.value=UpdateState("error",r,message=e.message?:"설치 실행 실패")
+            }
+        }
+    }
+    fun permissionReturned(context:Context){
+        val prefs=settings(context)
+        val pending=prefs.getString(PENDING_PERMISSION,null)?:return
+        val old=_state.value
+        if(!context.packageManager.canRequestPackageInstalls()){
+            prefs.edit().remove(PENDING_PERMISSION).apply()
+            if(old.stage=="ready"&&old.release?.let(::identity)==pending)
+                _state.value=old.copy(message="설치 출처가 허용되지 않았습니다. 원하는 경우 설치 버튼으로 다시 시도하세요.",installRequested=false)
+        }else if(old.stage=="ready"&&old.release?.let(::identity)==pending){
+            _state.value=old.copy(message="출처 허용 완료 · 설치 진행",installRequested=true)
+        }
+    }
+    fun installerReturned(context:Context){
+        val old=_state.value
+        if(old.stage=="ready"&&old.release!=null&&UpdateRules.compare(old.release.tag,current(context))>0){
+            _state.value=old.copy(message="설치 화면이 종료되었습니다. 필요한 경우 설치 버튼으로 다시 시도하세요.",installRequested=false)
         }
     }
 }

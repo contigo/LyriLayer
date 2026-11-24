@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,13 +29,16 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
     var review by remember{mutableStateOf<AiQueueEntry?>(null)}
     val keys=remember(entries){entries.map{it.key}.toSet()}
     val candidates=remember(tracks,lyrics,keys){tracks.distinctBy{it.key}.mapNotNull{t->if(t.key in keys)null else AiQueueRules.kind(t,lyrics[t.key])?.let{t to it}}}
-    val missing=candidates.count{it.second==AiQueueRules.EXTRACT}
-    val plain=candidates.size-missing
+    val (missing,plain)=remember(entries){AiQueueRules.countKinds(entries)}
+    val availableMissing=candidates.count{it.second==AiQueueRules.EXTRACT}
+    val availablePlain=candidates.count{it.second==AiQueueRules.ALIGN}
+    val visibleEntries=remember(entries,filter){AiQueueRules.filtered(entries,filter)}
     val pending=entries.count{it.state=="pending"}
     val done=entries.count{it.state in setOf("review","saved","failed","skipped")}
     val percent=if(entries.isEmpty())0 else ((done*100L+if(entries.any{it.key==live.key&&it.state=="running"})live.percent else 0)/entries.size).toInt().coerceIn(0,100)
     Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick=onBack){Text("‹ 뒤로")};Text("AI 분석 목록",fontSize=24.sp)}
     Text("대상: 가사 없음 "+missing+"곡 · 일반 가사 "+plain+"곡",fontSize=14.sp)
+    Text("추가 가능: 가사 없음 "+availableMissing+"곡 · 일반 가사 "+availablePlain+"곡",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
     Row(verticalAlignment=Alignment.CenterVertically){
         Text("분석 언어",Modifier.weight(1f),fontSize=13.sp)
         listOf("auto" to "자동","ko" to "한","en" to "영","ja" to "일").forEach{(key,label)->TextButton(onClick={language=key},contentPadding=PaddingValues(2.dp),modifier=Modifier.width(40.dp)){Text(if(language==key)"[$label]" else label)}}
@@ -57,11 +61,15 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
         }
     }
     if(notice.isNotBlank())Text(notice,fontSize=12.sp)
-    Row(horizontalArrangement=Arrangement.spacedBy(3.dp)){
-        listOf("all" to "전체","pending" to "대기","review" to "검토","failed" to "실패").forEach{(id,label)->FilterChip(selected=filter==id,onClick={filter=id},label={Text(label)},modifier=Modifier.weight(1f))}
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+        AiQueueRules.tabs.forEach{(id,label)->
+            val count=entries.count{AiQueueRules.visible(id,it.state)}
+            FilterChip(selected=filter==id,onClick={filter=id},label={Text("$label $count",maxLines=1)})
+        }
     }
     LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
-        items(entries.filter{filter=="all"||it.state==filter},key={it.key}){item->
+        if(visibleEntries.isEmpty())item{Text("해당 상태의 곡이 없습니다.",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+        items(visibleEntries,key={it.key}){item->
             Column(Modifier.fillMaxWidth()){
                 Row(verticalAlignment=Alignment.CenterVertically){
                     Column(Modifier.weight(1f)){
@@ -74,6 +82,8 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
                     if(item.state!="running")TextButton(onClick={AiQueue.remove(context,item.key)}){Text("제거")}
                 }
                 if(item.state=="running"&&live.key==item.key){
+                    LinearProgressIndicator(progress={live.percent/100f},modifier=Modifier.fillMaxWidth())
+                    Text("실시간 가사 분석 미리보기",fontSize=12.sp)
                     Lrc.parse(live.preview).takeLast(3).forEach{line->Text("["+LyricDisplay.timestamp(line.ms)+"] "+line.text,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                 }
                 HorizontalDivider()
