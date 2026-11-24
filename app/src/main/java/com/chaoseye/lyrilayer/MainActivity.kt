@@ -72,6 +72,9 @@ class MainActivity : ComponentActivity() {
         var lyricFilter by rememberSaveable { mutableStateOf("all") }
         var page by rememberSaveable { mutableIntStateOf(0) }
         var settingsScreen by rememberSaveable { mutableStateOf("main") }
+        var queueScreen by rememberSaveable { mutableStateOf(false) }
+        BackHandler(enabled=page==0&&queueScreen){queueScreen=false}
+        val queuedLive by AiQueue.live.collectAsStateWithLifecycle()
         BackHandler(enabled=page==2&&settingsScreen!="main"){settingsScreen="main"}
         var edit by remember { mutableStateOf<Track?>(null) }
         var syncTrack by remember { mutableStateOf<Track?>(null) }
@@ -168,9 +171,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
-        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main"},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
+        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&queueScreen)) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                if(page==2&&settingsScreen=="position"){
+                if(page==0&&queueScreen){
+                    AiQueueScreen(this@MainActivity,tracks,map,modelReady,onBack={queueScreen=false})
+                }else if(page==2&&settingsScreen=="position"){
                     Row(verticalAlignment=Alignment.CenterVertically){
                         TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")}
                         Text("가사 표시 위치",style=MaterialTheme.typography.titleLarge,fontSize=22.sp)
@@ -241,6 +246,9 @@ class MainActivity : ComponentActivity() {
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             Button(onClick={BatchWorker.start(this@MainActivity)},enabled=allowed && job?.state?.isFinished!=false) { Text("가사 일괄 수집",fontSize=16.sp) }
                             OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침",fontSize=16.sp) }
+                        }
+                        OutlinedButton(onClick={queueScreen=true},modifier=Modifier.fillMaxWidth()){
+                            Text(if(queuedLive.running)"✦ AI 분석 목록 · 처리 중 "+queuedLive.percent+"%" else "✦ AI 분석 목록 / 일괄 분석",fontSize=16.sp)
                         }
                         if(job!=null) {
                             val data=when{
