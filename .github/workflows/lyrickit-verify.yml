@@ -39,3 +39,16 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+      - name: Live Cyberpunk lyrics diagnostic
+        env:
+          LYRICKIT_LIVE_TEST: '1'
+        run: |
+          gradle :lyrickit:testDebugUnitTest --tests '*LiveSearchTest' --rerun-tasks --stacktrace
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          for path in glob.glob('lyrickit/build/test-results/testDebugUnitTest/TEST-*LiveSearchTest.xml'):
+              root = ET.parse(path).getroot()
+              for node in root.iter('system-out'):
+                  for line in (node.text or '').splitlines():
+                      if line.startswith('LIVE '): print(line)
+          PY
