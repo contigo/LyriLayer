@@ -9,7 +9,7 @@ internal object LyricKitBridge {
     suspend fun lookup(track: Track): SearchOutcome {
         if (track.excluded || MusicRules.excluded("", track.fileName, track.title)) return SearchOutcome.NotFound
         val identity = MusicRules.identities(track.title, track.artist, track.fileName)
-            .firstOrNull { it.title.isNotBlank() && it.artist.isNotBlank() } ?: return SearchOutcome.NotFound
+            .firstOrNull { it.title.isNotBlank() } ?: return SearchOutcome.NotFound
         return engine.searchDetailed(SongInfo(identity.title, identity.artist,
             MusicRules.clean(track.album).takeIf { it.isNotBlank() }, track.duration.takeIf { it > 0 }))
     }

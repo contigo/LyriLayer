@@ -14,6 +14,16 @@ class EngineTest {
         assertEquals(0f, LyricsMatcher.score(song, song.copy(durationMs=200000)), 0f)
         assertTrue(LyricsMatcher.score(song, song.copy(durationMs=null)) < 90f)
     }
+    @Test fun multilingualArtistAndDecoratedTitle() {
+        val clean=SongInfo("I Really Want to Stay at Your House","Rosa Walton & Hallie Coggins",durationMs=246000)
+        val bugs=clean.copy(artist="Rosa Walton(로사 월튼), Hallie Coggins")
+        assertEquals(95f,LyricsMatcher.score(clean,bugs),0f)
+        assertEquals(0f,LyricsMatcher.score(clean,bugs.copy(artist="Rosa Walton, Other Artist")),0f)
+        val raw=SongInfo("cyberpunk 2077 soundtrack - i really want to stay at your house by rosa walton & ha","",durationMs=246000)
+        assertEquals("i really want to stay at your house",SongNormalizer.normalize(raw).title)
+        assertTrue(SongNormalizer.truncatedCreditMatches(raw,bugs))
+        assertFalse(SongNormalizer.truncatedCreditMatches(raw,bugs.copy(artist="Rosa Walton, Other Artist")))
+    }
     @Test fun parses() {
         val lines = LrcParser.fromBugs("7.305|첫 줄＃8.3|둘째 줄")
         assertEquals(7305L, lines.first().startTimeMs)

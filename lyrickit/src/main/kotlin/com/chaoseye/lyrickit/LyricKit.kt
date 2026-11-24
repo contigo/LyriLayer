@@ -19,14 +19,28 @@ class LyricKit(private val providers: List<LyricsProvider>, private val timeoutM
     suspend fun search(song: SongInfo, sources: Set<Provider> = availableProviders): LyricsResult? =
         (searchDetailed(song, sources) as? SearchOutcome.Found)?.result
     suspend fun searchDetailed(song: SongInfo, sources: Set<Provider> = availableProviders): SearchOutcome = supervisorScope {
-        require(song.title.isNotBlank() && song.artist.isNotBlank())
+        require(song.title.isNotBlank())
+        val normalized = SongNormalizer.normalize(song)
+        if(normalized.artist.isBlank()) return@supervisorScope SearchOutcome.NotFound
         val selected = providers.filter { it.source in sources }
         val reports = selected.map { provider -> async {
             val collected = mutableListOf<LyricsResult>()
             var failed = false
             try {
                 withTimeoutOrNull(timeoutMs) {
-                    val matches = provider.search(song).map { it to LyricsMatcher.score(song,it.song) }
+                    val variants = SongNormalizer.searchVariants(song)
+                    val candidates = mutableListOf<TrackCandidate>()
+                    for (variant in variants) {
+                        candidates += provider.search(variant)
+                        if (candidates.isNotEmpty()) break
+                    }
+                    val matches = candidates.distinctBy { it.id }.map { candidate ->
+                        val direct = LyricsMatcher.score(normalized,candidate.song)
+                        val inferred = if (direct == 0f && SongNormalizer.truncatedCreditMatches(song,candidate.song)
+                            && normalized.durationMs != null && candidate.song.durationMs != null)
+                            LyricsMatcher.score(normalized.copy(artist=candidate.song.artist),candidate.song).coerceAtMost(90f) else 0f
+                        candidate to maxOf(direct,inferred)
+                    }
                         .filter { it.second >= minimumScore }.sortedByDescending { it.second }.take(3)
                     for ((candidate, score) in matches) {
                         try {

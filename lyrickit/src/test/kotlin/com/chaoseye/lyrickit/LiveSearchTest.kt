@@ -34,5 +34,11 @@ class LiveSearchTest {
             is SearchOutcome.Unavailable -> println("LIVE engine unavailable ${outcome.failedProviders}")
             SearchOutcome.NotFound -> println("LIVE engine not found")
         }
+        val rawOutcome=createLyricKit().searchDetailed(SongInfo(raw,"",durationMs=246000))
+        println("LIVE raw engine " + when(rawOutcome) {
+            is SearchOutcome.Found -> "found provider="+rawOutcome.result.provider+" score="+rawOutcome.result.matchScore+" syncLines="+rawOutcome.result.syncedLines.size
+            is SearchOutcome.Unavailable -> "unavailable "+rawOutcome.failedProviders
+            SearchOutcome.NotFound -> "not found"
+        })
     }
 }
