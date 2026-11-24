@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.work.WorkManager
 import androidx.work.WorkInfo
@@ -65,16 +66,16 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
         Scaffold(bottomBar={ NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                Text("LyriLayer",style=MaterialTheme.typography.headlineMedium)
+                Text("LyriLayer",style=MaterialTheme.typography.headlineMedium,fontSize=30.sp)
                 when(page) {
                     0 -> {
                         val found=tracks.count { map[it.key]?.status=="FOUND" || map[it.key]?.status=="INSTRUMENTAL" }
-                        Text("전체 ${tracks.size}곡 · 등록 $found · 미등록 ${tracks.size-found}")
-                        Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall)
+                        Text("전체 ${tracks.size}곡 · 등록 $found · 미등록 ${tracks.size-found}",fontSize=18.sp)
+                        Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                         if(!allowed) Button(onClick={permission.launch(audioPermission)}) { Text("음악 파일 접근 허용") }
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                            Button(onClick={BatchWorker.start(this@MainActivity)},enabled=allowed && job?.state?.isFinished!=false) { Text("가사 일괄 수집") }
-                            OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침") }
+                            Button(onClick={BatchWorker.start(this@MainActivity)},enabled=allowed && job?.state?.isFinished!=false) { Text("가사 일괄 수집",fontSize=16.sp) }
+                            OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침",fontSize=16.sp) }
                         }
                         if(job!=null) {
                             val data=when{
@@ -87,15 +88,15 @@ class MainActivity : ComponentActivity() {
                             Card(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
                                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                                        Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기 / 이어서 처리"},style=MaterialTheme.typography.titleMedium)
-                                        Text("$percent%",style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.primary)
+                                        Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기 / 이어서 처리"},style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
+                                        Text("$percent%",style=MaterialTheme.typography.headlineSmall,fontSize=26.sp,color=MaterialTheme.colorScheme.primary)
                                     }
-                                    LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth())
-                                    Text("처리 $done / $total 곡 · 남은 곡 ${(total-done).coerceAtLeast(0)}",style=MaterialTheme.typography.bodySmall)
-                                    Text("성공 ${data.getInt("found",0)} · 없음 ${data.getInt("missing",0)} · 오류 ${data.getInt("errors",0)}",style=MaterialTheme.typography.bodySmall)
-                                    data.getString("current")?.takeIf{it.isNotBlank()&&!job.state.isFinished}?.let{Text("검색 중: $it",style=MaterialTheme.typography.bodySmall)}
-                                    data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
-                                    if(!job.state.isFinished) TextButton(onClick={work.cancelUniqueWork(BatchWorker.NAME)}){Text("수집 중단")}
+                                    LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth().height(8.dp))
+                                    Text("처리 $done / $total 곡 · 남은 곡 ${(total-done).coerceAtLeast(0)}",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
+                                    Text("성공 ${data.getInt("found",0)} · 없음 ${data.getInt("missing",0)} · 오류 ${data.getInt("errors",0)}",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
+                                    data.getString("current")?.takeIf{it.isNotBlank()&&!job.state.isFinished}?.let{Text("검색 중: $it",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
+                                    data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
+                                    if(!job.state.isFinished) TextButton(onClick={work.cancelUniqueWork(BatchWorker.NAME)}){Text("수집 중단",fontSize=16.sp)}
                                 }
                             }
                         }
@@ -213,7 +214,7 @@ class MainActivity : ComponentActivity() {
             var offset by remember(t) { mutableStateOf((old?.offset ?: 0).toString()) }
             var localStatus by remember(t){mutableStateOf("")}
             val pickLrc=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)scope.launch{try{raw=withContext(Dispatchers.IO){LocalLyrics.readText(this@MainActivity,uri)};localStatus="파일 가져오기 완료"}catch(e:Exception){localStatus="파일 읽기 오류: ${e.message}"}}}
-            AlertDialog(onDismissRequest={edit=null},title={Text(t.title)},text={Column(Modifier.heightIn(max=440.dp).verticalScroll(rememberScrollState())) { OutlinedTextField(raw,{raw=it},label={Text("LRC 또는 일반 가사")},modifier=Modifier.heightIn(max=240.dp)); OutlinedTextField(offset,{offset=it},label={Text("싱크 보정 (ms, +는 늦게)")}); TextButton(onClick={startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/search?q="+Uri.encode("${t.artist} ${t.title} 가사"))))}) { Text("Google에서 직접 검색") }; TextButton(onClick={clipboard.getText()?.text?.let { raw=it }}) { Text("복사한 가사 붙여넣기") }; TextButton(onClick={scope.launch{val l=withContext(Dispatchers.IO){LocalLyrics.find(this@MainActivity,t)};if(l!=null){raw=l.synced.ifBlank{l.plain};localStatus="내장 또는 로컬 가사 찾음"}else localStatus="내장 가사 없음 · LRC 파일을 직접 선택하세요"}}}){Text("내장 가사 / 같은 이름 LRC 읽기")}; TextButton(onClick={pickLrc.launch(arrayOf("*/*"))}){Text("LRC 또는 TXT 파일 선택")}; if(localStatus.isNotBlank())Text(localStatus,style=MaterialTheme.typography.bodySmall) }},confirmButton={TextButton(onClick={scope.launch { val synced=Lrc.parse(raw).isNotEmpty(); db.dao().put(Lyric(t.key,if(synced) "" else raw,if(synced) raw else "","USER",if(raw.isBlank()) "NOT_FOUND" else "FOUND",edited=raw.isNotBlank(),offset=offset.toLongOrNull() ?: 0));edit=null }}) { Text("저장") }},dismissButton={TextButton(onClick={edit=null}) { Text("취소") }})
+            AlertDialog(onDismissRequest={edit=null},title={Text(t.title)},text={Column(Modifier.heightIn(max=440.dp).verticalScroll(rememberScrollState())) { OutlinedTextField(raw,{raw=it},label={Text("LRC 또는 일반 가사")},modifier=Modifier.heightIn(max=240.dp)); OutlinedTextField(offset,{offset=it},label={Text("싱크 보정 (ms, +는 늦게)")}); TextButton(onClick={startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/search?q="+Uri.encode("${t.artist} ${t.title} 가사"))))}) { Text("Google에서 직접 검색") }; TextButton(onClick={clipboard.getText()?.text?.let { raw=it }}) { Text("복사한 가사 붙여넣기") }; TextButton(onClick={scope.launch{val l=withContext(Dispatchers.IO){LocalLyrics.find(this@MainActivity,t)};if(l!=null){raw=l.synced.ifBlank{l.plain};localStatus="내장 또는 로컬 가사 찾음"}else localStatus="내장 가사 없음 · LRC 파일을 직접 선택하세요"}}){Text("내장 가사 / 같은 이름 LRC 읽기")}; TextButton(onClick={pickLrc.launch(arrayOf("*/*"))}){Text("LRC 또는 TXT 파일 선택")}; if(localStatus.isNotBlank())Text(localStatus,style=MaterialTheme.typography.bodySmall) }},confirmButton={TextButton(onClick={scope.launch { val synced=Lrc.parse(raw).isNotEmpty(); db.dao().put(Lyric(t.key,if(synced) "" else raw,if(synced) raw else "","USER",if(raw.isBlank()) "NOT_FOUND" else "FOUND",edited=raw.isNotBlank(),offset=offset.toLongOrNull() ?: 0));edit=null }}) { Text("저장") }},dismissButton={TextButton(onClick={edit=null}) { Text("취소") }})
         }
     }
 }
