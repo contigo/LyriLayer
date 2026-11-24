@@ -11,7 +11,7 @@ object MusicRules {
         return recording.containsMatchIn(v) || tphone.matches(v)
     }
     fun excluded(path:String,name:String,title:String="",flag:Boolean=false):Boolean =
-        flag || path.replace('\\','/').split('/').any { it.trim().lowercase(Locale.ROOT) in folders } ||
+        flag || path.contains("Recording", ignoreCase = true) || path.replace('\\','/').split('/').any { it.trim().lowercase(Locale.ROOT) in folders } ||
             recordingName(name) || recordingName(title)
     fun clean(s:String)=Normalizer.normalize(s,Normalizer.Form.NFKC).trim().replace(Regex("\\s+")," ").takeUnless { it.equals("<unknown>",true)||it.equals("unknown",true)||it=="알 수 없음" }.orEmpty()
     fun norm(s:String)=clean(s).lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]"),"")

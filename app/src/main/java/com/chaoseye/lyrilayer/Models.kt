@@ -45,10 +45,10 @@ object Library {
                     val title=r.getString(1).orEmpty(); val name=r.getString(5).orEmpty()
                     val relative=r.getString(6).orEmpty()
                     val dataIndex=r.getColumnIndex("_data")
-                    val absolute=if(dataIndex>=0)r.getString(dataIndex).orEmpty().substringBeforeLast('/',"") else ""
+                    val absolute=if(dataIndex>=0)r.getString(dataIndex).orEmpty() else ""
                     val path=if(Build.VERSION.SDK_INT>=29)relative else absolute
                     val flagged=(r.getColumnIndex("is_recording").let{it>=0&&r.getInt(it)!=0})||r.getInt(8)!=0||r.getInt(9)!=0||r.getInt(10)!=0
-                    val excluded=MusicRules.excluded(path,name,title,flagged)||MusicRules.excluded(absolute,"")||r.getInt(7)==0
+                    val excluded=MusicRules.excluded(path,name,title,flagged)||MusicRules.excluded(absolute,"")||MusicRules.excluded(path.trimEnd('/')+"/"+name,"")||r.getInt(7)==0
                     add(Track(title,r.getString(2).orEmpty(),r.getString(3).orEmpty(),r.getLong(4),ContentUris.withAppendedId(uri,r.getLong(0)).toString(),name,excluded))
                 }
             }
