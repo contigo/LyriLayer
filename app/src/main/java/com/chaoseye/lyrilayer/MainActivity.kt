@@ -120,6 +120,12 @@ class MainActivity : ComponentActivity() {
             aiTrack=t
         }
         var modelReady by remember { mutableStateOf(DeviceLyrics.ready(this)) }
+        val aiPrefs=remember{getSharedPreferences("settings",MODE_PRIVATE)}
+        var aiModel by remember{mutableStateOf(DeviceLyrics.selected(this).id)}
+        var aiThreads by remember{mutableIntStateOf(aiPrefs.getInt(AiPerformance.THREADS_KEY,0))}
+        var aiReuse by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.REUSE_KEY,true))}
+        var aiLanguageOnce by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.LANGUAGE_KEY,false))}
+        val activeAnalysis by DeviceLyrics.activeAnalysis.collectAsStateWithLifecycle()
         var modelBusy by remember { mutableStateOf(false) }
         var modelProgress by remember { mutableIntStateOf(0) }
         var modelMessage by remember { mutableStateOf("") }
@@ -420,8 +426,28 @@ class MainActivity : ComponentActivity() {
                             HorizontalDivider()
                         }
                         Text("온디바이스 AI 가사",style=MaterialTheme.typography.titleLarge)
-                        Text(if(modelReady)"Whisper Base 모델 준비됨" else "모델 최초 1회 다운로드 (약 57 MiB). 이후 음원은 기기에서만 분석합니다.")
-                        Button(enabled=!modelBusy&&DeviceLyrics.supported(),onClick={scope.launch {
+                        val performanceBusy=modelBusy||aiRunning||queuedLive.running||activeAnalysis!=null
+                        Text("AI 분석 성능 설정",fontSize=18.sp)
+                        AiPerformance.models.forEach{spec->
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                RadioButton(selected=aiModel==spec.id,enabled=!performanceBusy,onClick={
+                                    aiModel=spec.id;aiPrefs.edit().putString(AiPerformance.MODEL_KEY,spec.id).apply()
+                                    modelReady=DeviceLyrics.ready(this@MainActivity);modelMessage=""
+                                })
+                                Text(spec.title,fontSize=14.sp)
+                            }
+                        }
+                        Text("CPU 스레드 · 현재 "+AiPerformance.threads(aiThreads,Runtime.getRuntime().availableProcessors())+"개",fontSize=14.sp)
+                        Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){
+                            listOf(0,2,4,6,8).forEach{n->
+                                FilterChip(selected=aiThreads==n,enabled=!performanceBusy,onClick={aiThreads=n;aiPrefs.edit().putInt(AiPerformance.THREADS_KEY,n).apply()},label={Text(if(n==0)"자동" else n.toString())})
+                            }
+                        }
+                        Row(verticalAlignment=Alignment.CenterVertically){Text("일괄 분석 모델 재사용",Modifier.weight(1f));Switch(aiReuse,{aiReuse=it;aiPrefs.edit().putBoolean(AiPerformance.REUSE_KEY,it).apply()},enabled=!performanceBusy)}
+                        Row(verticalAlignment=Alignment.CenterVertically){Text("곡당 언어 감지 1회 (혼합 언어 주의)",Modifier.weight(1f));Switch(aiLanguageOnce,{aiLanguageOnce=it;aiPrefs.edit().putBoolean(AiPerformance.LANGUAGE_KEY,it).apply()},enabled=!performanceBusy)}
+                        Text("CPU ARM64 최적화 · GPU 가속은 아직 미지원",fontSize=12.sp)
+                        Text(if(modelReady)AiPerformance.model(aiModel).title+" · 모델 준비됨" else "선택 모델을 최초 1회 다운로드하세요. 이후 음원은 기기에서만 분석합니다.")
+                        Button(enabled=!performanceBusy&&DeviceLyrics.supported(),onClick={scope.launch {
                             modelBusy=true;modelProgress=0;modelMessage="모델 다운로드 중"
                             try{DeviceLyrics.prepare(this@MainActivity){n->runOnUiThread{modelProgress=n}};modelReady=true;modelMessage="모델 준비 완료"}
                             catch(e:CancellationException){throw e}catch(e:Exception){modelMessage="다운로드 오류: ${e.message}"}

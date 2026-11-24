@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-internal data class QueueLive(val running:Boolean=false, val stopping:Boolean=false, val key:String?=null, val percent:Int=0, val stage:String="", val preview:String="")
+internal data class QueueLive(val running:Boolean=false, val stopping:Boolean=false, val key:String?=null, val percent:Int=0, val stage:String="", val preview:String="",val startedAt:Long=0L,val completedCount:Int=0,val elapsedTotal:Long=0L)
 internal object AiQueue {
     private val scope = CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private val mutex = Mutex()
@@ -52,6 +52,8 @@ internal object AiQueue {
             try {
                 mutex.withLock {init(c)}
                 val tracks=withContext(Dispatchers.IO){Library.scan(c).associateBy{it.key}}
+                var completedCount=0
+                var elapsedTotal=0L
                 while(isActive) {
                     val item=mutex.withLock {
                         val next=dao.nextPending()?:return@withLock null
@@ -65,7 +67,8 @@ internal object AiQueue {
                         if(t==null||kind==null) {
                             dao.update(item.copy(state="skipped",message="음원 없음 또는 이미 싱크 등록됨"));active=null;continue
                         }
-                        _live.value=QueueLive(running=true,key=item.key,stage="AI 분석 준비")
+                        val started=android.os.SystemClock.elapsedRealtime()
+                        _live.value=QueueLive(running=true,key=item.key,stage="AI 분석 준비",startedAt=started,completedCount=completedCount,elapsedTotal=elapsedTotal)
                         val raw=DeviceLyrics.extract(c,t,item.language,preview={text->
                             _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(preview=text)else old}
                         }){n,stage->
@@ -80,7 +83,11 @@ internal object AiQueue {
                         val draft=if(kind==AiQueueRules.ALIGN)PlainSync.lrc(marks.map{Line(it.ms,it.text)})else PlainSync.lrc(heard)
                         val plain=if(kind==AiQueueRules.ALIGN)original else heard.joinToString("\n"){it.text}
                         val uncertain=marks.count{!it.matched}
-                        dao.update(item.copy(kind=kind,state="review",draft=draft,plain=plain,baseline=AiQueueRules.fingerprint(before),uncertain=uncertain,message=if(kind==AiQueueRules.ALIGN)"매칭 "+(marks.size-uncertain)+"/"+marks.size+"줄 · 검토 필요" else "AI 생성 가사 · 검토 필요"))
+                        val elapsed=android.os.SystemClock.elapsedRealtime()-started
+                        completedCount++;elapsedTotal+=elapsed
+                        val resultMessage=if(kind==AiQueueRules.ALIGN)"매칭 "+(marks.size-uncertain)+"/"+marks.size+"줄 · 검토 필요" else "AI 생성 가사 · 검토 필요"
+                        dao.update(item.copy(kind=kind,state="review",draft=draft,plain=plain,baseline=AiQueueRules.fingerprint(before),uncertain=uncertain,message=resultMessage+" · "+AiPerformance.time(elapsed)))
+                        _live.update{old->old.copy(completedCount=completedCount,elapsedTotal=elapsedTotal)}
                     }catch(e:CancellationException){throw e}
                     catch(e:Exception){dao.update(item.copy(state="failed",message=(e.message?:"분석 실패").take(300)))}
                     catch(e:LinkageError){dao.update(item.copy(state="failed",message="AI 엔진 오류"))}

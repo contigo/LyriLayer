@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyrics:Map<String,Lyric>, modelReady:Boolean, onBack:()->Unit){
@@ -21,6 +22,8 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
     val entries by remember{dao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
     val live by AiQueue.live.collectAsStateWithLifecycle()
     val notice by AiQueue.notice.collectAsStateWithLifecycle()
+    var clock by remember{mutableLongStateOf(android.os.SystemClock.elapsedRealtime())}
+    LaunchedEffect(live.running){while(live.running){clock=android.os.SystemClock.elapsedRealtime();delay(1000)}}
     LaunchedEffect(Unit){AiQueue.initialize(context)}
     var filter by remember{mutableStateOf("all")}
     var language by remember{mutableStateOf("auto")}
@@ -52,7 +55,19 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
             Text("전체 진행률 $percent% · $done/"+entries.size+"곡",fontSize=18.sp)
             LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth())
             Text("대기 $pending · 검토 "+entries.count{it.state=="review"}+" · 저장 "+entries.count{it.state=="saved"}+" · 실패 "+entries.count{it.state=="failed"},fontSize=13.sp)
-            if(live.running){Text(live.stage+" · "+live.percent+"%",fontSize=13.sp);LinearProgressIndicator(progress={live.percent/100f},modifier=Modifier.fillMaxWidth())}
+            if(live.running){
+                Text(live.stage+" · "+live.percent+"%",fontSize=13.sp)
+                LinearProgressIndicator(progress={live.percent/100f},modifier=Modifier.fillMaxWidth())
+                if(live.startedAt>0){
+                    val elapsed=(clock-live.startedAt).coerceAtLeast(0)
+                    val remaining=AiPerformance.remainingMs(elapsed,live.percent)
+                    Text("현재 곡 "+AiPerformance.time(elapsed)+(remaining?.let{" · 남은 시간 약 "+AiPerformance.time(it)}?:""),fontSize=12.sp)
+                    if(live.completedCount>0){
+                        val average=live.elapsedTotal/live.completedCount
+                        Text("평균 "+AiPerformance.time(average)+" / 곡 · 대기 곡 약 "+AiPerformance.time(average*pending),fontSize=12.sp)
+                    }
+                }
+            }
             Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
                 Button(enabled=!live.running&&pending>0&&modelReady,onClick={AiQueue.start(context)},modifier=Modifier.weight(1f)){Text("분석 시작 / 재개")}
                 OutlinedButton(enabled=live.running&&!live.stopping,onClick={AiQueue.pause()}){Text("중지")}

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.22.1)
 project(lyrilayer_native LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Optimize inference even in development APKs; keep portable ARMv8 baseline.
+add_compile_options($<$<COMPILE_LANGUAGE:C>:-O3> $<$<COMPILE_LANGUAGE:CXX>:-O3>)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)

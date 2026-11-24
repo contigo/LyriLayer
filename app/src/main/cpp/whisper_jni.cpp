@@ -28,7 +28,7 @@ Java_com_chaoseye_lyrilayer_NativeWhisper_decode(JNIEnv *e, jobject, jlong handl
     const char *lang = e->GetStringUTFChars(language, nullptr);
     if (!lang) return nullptr;
     auto params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.n_threads = std::max(1, std::min(4, (int) threads));
+    params.n_threads = std::max(1, std::min(8, (int) threads));
     params.language = lang;
     params.translate = false;
     params.no_context = true;
@@ -59,6 +59,14 @@ Java_com_chaoseye_lyrilayer_NativeWhisper_decode(JNIEnv *e, jobject, jlong handl
     auto result = e->NewByteArray(static_cast<jsize>(out.size()));
     if (result && !out.empty()) e->SetByteArrayRegion(result, 0, static_cast<jsize>(out.size()), reinterpret_cast<const jbyte *>(out.data()));
     return result;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_chaoseye_lyrilayer_NativeWhisper_detectedLanguage(JNIEnv *e, jobject, jlong handle) {
+    auto *ctx = reinterpret_cast<whisper_context *>(handle);
+    if (!ctx) return nullptr;
+    const char *lang = whisper_lang_str(whisper_full_lang_id(ctx));
+    return lang ? e->NewStringUTF(lang) : nullptr;
 }
 
 extern "C" JNIEXPORT void JNICALL

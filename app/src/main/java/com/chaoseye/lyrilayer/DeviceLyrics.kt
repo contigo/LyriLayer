@@ -24,6 +24,7 @@ internal object NativeWhisper {
     init { System.loadLibrary("lyrilayer_whisper") }
     external fun open(path:String):Long
     external fun decode(handle:Long,pcm:FloatArray,threads:Int,language:String,offsetMs:Long):ByteArray?
+    external fun detectedLanguage(handle:Long):String?
     external fun close(handle:Long)
 }
 
@@ -32,28 +33,53 @@ internal data class AiAnalysisProgress(val trackKey:String,val percent:Int)
 object DeviceLyrics {
     private val _activeAnalysis=MutableStateFlow<AiAnalysisProgress?>(null)
     internal val activeAnalysis=_activeAnalysis.asStateFlow()
-    private const val MODEL="ggml-base-q5_1.bin"
-    private const val SIZE=59707625L
-    private const val SHA="422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"
-    private const val URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-base-q5_1.bin"
+    private var cachedHandle=0L
+    private var cachedModel=""
+    private var releaseJob:Job?=null
+    private val idleScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+    private val verified=mutableMapOf<String,Pair<Long,Long>>()
     private val lock=Mutex()
     private val client=OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(60,TimeUnit.SECONDS).callTimeout(20,TimeUnit.MINUTES).build()
     fun supported()=Build.SUPPORTED_ABIS.any{it=="arm64-v8a"}
-    private fun model(c:Context)=File(File(c.filesDir,"whisper"),MODEL)
-    fun ready(c:Context)=model(c).length()==SIZE
+    private fun prefs(c:Context)=c.getSharedPreferences("settings",Context.MODE_PRIVATE)
+    internal fun selected(c:Context)=AiPerformance.model(prefs(c).getString(AiPerformance.MODEL_KEY,"base"))
+    private fun model(c:Context,spec:WhisperModel)=File(File(c.filesDir,"whisper"),spec.filename)
+    fun ready(c:Context)=selected(c).let{it.sizeValid(model(c,it).length())}
+    // A single native context is used under lock; never share it concurrently.
+    private fun closeCached(){
+        if(cachedHandle!=0L)NativeWhisper.close(cachedHandle)
+        cachedHandle=0L;cachedModel=""
+    }
+    private fun releaseLater(){
+        releaseJob?.cancel()
+        releaseJob=idleScope.launch{
+            delay(60_000)
+            lock.withLock{closeCached()}
+        }
+    }
+    private suspend fun verifyModel(file:File,spec:WhisperModel):Boolean{
+        if(!spec.sizeValid(file.length()))return false
+        val stamp=file.length() to file.lastModified()
+        if(verified[spec.id]==stamp)return true
+        val hash=MessageDigest.getInstance("SHA-256")
+        file.inputStream().use{input->
+            val buf=ByteArray(65536)
+            while(true){currentCoroutineContext().ensureActive();val n=input.read(buf);if(n<0)break;hash.update(buf,0,n)}
+        }
+        val ok=hash.digest().joinToString(""){"%02x".format(it)}==spec.sha
+        if(ok)verified[spec.id]=stamp else verified.remove(spec.id)
+        return ok
+    }
     suspend fun prepare(c:Context,progress:(Int)->Unit)=lock.withLock {
         withContext(Dispatchers.IO){
             if(!supported())throw IOException("64비트 ARM 기기 필요")
-            val dst=model(c);dst.parentFile?.mkdirs()
-            fun hex(d:ByteArray)=d.joinToString(""){"%02x".format(it)}
-            if(dst.length()==SIZE){
-                val hash=MessageDigest.getInstance("SHA-256")
-                dst.inputStream().use{input->val buf=ByteArray(65536);while(true){currentCoroutineContext().ensureActive();val n=input.read(buf);if(n<0)break;hash.update(buf,0,n)}}
-                if(hex(hash.digest())==SHA){progress(100);return@withContext}
-            }
-            val tmp=File(dst.parentFile,MODEL+".part")
+            val spec=selected(c)
+            val dst=model(c,spec);dst.parentFile?.mkdirs()
+            if(verifyModel(dst,spec)){progress(100);return@withContext}
+            releaseJob?.cancel();closeCached();verified.remove(spec.id)
+            val tmp=File(dst.parentFile,spec.filename+".part")
             try{
-                client.newCall(Request.Builder().url(URL).build()).execute().use{r->
+                client.newCall(Request.Builder().url(spec.url).build()).execute().use{r->
                     if(!r.isSuccessful)throw IOException("모델 다운로드 오류 HTTP ${r.code}")
                     val body=r.body?:throw IOException("모델 응답 없음")
                     val hash=MessageDigest.getInstance("SHA-256")
@@ -61,13 +87,14 @@ object DeviceLyrics {
                     body.byteStream().use{input->tmp.outputStream().use{output->
                         val buf=ByteArray(65536)
                         while(true){currentCoroutineContext().ensureActive();val n=input.read(buf);if(n<0)break
-                            total+=n;if(total>SIZE)throw IOException("모델 크기 오류")
-                            output.write(buf,0,n);hash.update(buf,0,n);progress((total*100/SIZE).toInt())
+                            total+=n;if(total>spec.maxSize)throw IOException("모델 크기 오류")
+                            output.write(buf,0,n);hash.update(buf,0,n);progress((total*100/(body.contentLength().takeIf{it>0}?:spec.maxSize)).toInt().coerceIn(0,99))
                         }
                     }}
-                    if(total!=SIZE||hex(hash.digest())!=SHA)throw IOException("모델 무결성 검증 실패")
+                    if(!spec.sizeValid(total)||hash.digest().joinToString(""){"%02x".format(it)}!=spec.sha)throw IOException("모델 무결성 검증 실패")
                 }
                 if(!tmp.renameTo(dst))throw IOException("모델 저장 실패")
+                verified[spec.id]=dst.length() to dst.lastModified()
                 progress(100)
             }finally{tmp.delete()}
         }
@@ -81,27 +108,39 @@ object DeviceLyrics {
                 progress(percent,stage)
             }
             if(t.excluded||t.uri.isBlank()||MusicRules.excluded("",t.fileName,t.title))throw IOException("분석할 음악 파일이 없습니다")
-            if(!supported()||!ready(c))throw IOException("설정에서 AI 모델을 먼저 다운로드하세요")
+            val spec=selected(c)
+            val file=model(c,spec)
+            if(!supported()||!verifyModel(file,spec))throw IOException("설정에서 선택한 AI 모델을 다운로드하거나 무결성을 확인하세요")
+            val settings=prefs(c)
+            val threads=AiPerformance.threads(settings.getInt(AiPerformance.THREADS_KEY,0),Runtime.getRuntime().availableProcessors())
+            val reuse=settings.getBoolean(AiPerformance.REUSE_KEY,true)
+            val once=settings.getBoolean(AiPerformance.LANGUAGE_KEY,false)
+            releaseJob?.cancel()
+            if(!reuse||cachedModel!=spec.id)closeCached()
             if(t.duration>12*60*1000L)throw IOException("현재 AI 분석은 12분 이하 곡을 지원합니다")
             report(0,"음악 디코딩")
             val pcm=AudioPcm.read(c,Uri.parse(t.uri))
             currentCoroutineContext().ensureActive()
             if(pcm.isEmpty())throw IOException("음원 디코딩 결과 없음")
-            val handle=NativeWhisper.open(model(c).absolutePath)
+            val handle=if(cachedHandle!=0L)cachedHandle else NativeWhisper.open(file.absolutePath)
             if(handle==0L)throw IOException("AI 모델 열기 실패 · 모델을 다시 확인하세요")
+            cachedHandle=handle;cachedModel=spec.id
+            var success=false
             try{
                 val output=StringBuilder()
                 var start=0
-                val chunk=25*16000
+                val chunk=30*16000
+                var effectiveLanguage=language
                 while(start<pcm.size){
                     currentCoroutineContext().ensureActive()
                     val end=minOf(start+chunk,pcm.size)
-                    report(start*100/pcm.size,"보컬 음성 인식")
-                    val part=NativeWhisper.decode(handle,pcm.copyOfRange(start,end),minOf(4,Runtime.getRuntime().availableProcessors()),language,start.toLong()*1000/16000)
+                    report((start.toLong()*100/pcm.size).toInt(),spec.id+" · CPU "+threads+"스레드 · 보컬 음성 인식")
+                    val part=NativeWhisper.decode(handle,pcm.copyOfRange(start,end),threads,effectiveLanguage,start.toLong()*1000/16000)
                         ?:throw IOException("AI 음성 인식 실패")
                     currentCoroutineContext().ensureActive()
                     val text=part.toString(Charsets.UTF_8).trim()
                     if(text.isNotBlank()){
+                        if(once&&effectiveLanguage=="auto")NativeWhisper.detectedLanguage(handle)?.takeIf{it.isNotBlank()&&it!="auto"}?.let{effectiveLanguage=it}
                         if(output.isNotEmpty())output.append('\n')
                         output.append(text).append('\n')
                     }
@@ -112,10 +151,11 @@ object DeviceLyrics {
                 currentCoroutineContext().ensureActive()
                 if(Lrc.parse(output.toString()).isEmpty())throw IOException("인식된 가사가 없습니다")
                 report(100,"확인 후 저장하세요")
+                success=true
                 output.toString()
-            }finally{NativeWhisper.close(handle)}
+            }finally{if(reuse&&success)releaseLater()else closeCached()}
         }
-        }finally{_activeAnalysis.value=null}
+        }finally{_activeAnalysis.value=null;if(cachedHandle!=0L&&releaseJob?.isActive!=true)releaseLater()}
     }
 }
 
