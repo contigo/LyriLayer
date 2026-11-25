@@ -131,3 +131,7 @@ Apache License 2.0 (LICENSE).
 ## v0.1.24 — AI 일괄 분석 자동 저장
 - 가사 추출 및 일반 가사 AI 싱크 자동 저장 기본 ON. 원문 매칭률 80% 미만 검토 대기 옵션 기본 ON(실제 정확도 지표는 아님). 기존 가사 변경 검사, 저장 실패 시 검토 초안 유지. 설정에서 각각 변경 가능.
 - 기존 검토 대기 항목 및 개별 수동 분석은 기존대로 유지. 자동 저장 성공 시 완료 탭으로 이동하고 재생 가사 갱신. 테스트 추가.
+
+## v0.1.35 — RecognitionKit
+- 독립 Android Library :recognitionkit (ARM64 Rust/JNI SongRec), 12초 부분 디코딩/지문 검색, 기존 MusicInfo DB 및 가사 수집 연결, 선택/일괄 검색 및 중단. 원본 및 수동 확인 정보 보호. 비공식 Shazam 실험적 동의 필요; 실제 서비스 허용 및 실기기 검증 미완료. 모든 HTTP 오류에서 중단.
+- 기존 Apache-2.0 소스 유지, RecognitionKit GPL-3.0-or-later, 결합 바이너리 GPLv3 조건. [원본 및 변경 고지](recognitionkit/NOTICE.md), [GPL](recognitionkit/LICENSE-GPL-3.0.md). 대응 소스와 빌드 스크립트 포함, AAR 및 단위 테스트.

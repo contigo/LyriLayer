@@ -36,5 +36,11 @@ internal object MusicInfoRepository {
     private fun info(t:Track,m:MusicMatch,manual:Boolean)=m.candidate.let{MusicInfo(t.key,it.title,it.artist,it.album,it.durationMs,it.source.name,it.id,m.score,it.artworkUrl,it.releaseDate,manual)}
     suspend fun select(c:Context,t:Track,m:MusicMatch)=gate.withLock{MusicInfoDb.get(c).dao().put(info(t,m,true))}
     suspend fun canonical(c:Context,t:Track):Track=MusicInfoDb.get(c).dao().get(t.key)?.let{t.copy(title=it.title,artist=it.artist,album=it.album.ifBlank{t.album},fileName="")}?:t
+    suspend fun acceptFingerprint(c:Context,t:Track,match:com.chaoseye.recognitionkit.RecognizedTrack):Boolean=gate.withLock{
+        val dao=MusicInfoDb.get(c).dao()
+        if(dao.get(t.key)?.userConfirmed==true)return@withLock false
+        dao.put(MusicInfo(t.key,match.title,match.artist,match.album,t.duration,match.provider,match.id,0,match.artworkUrl,match.releaseDate,false))
+        true
+    }
     suspend fun clear(c:Context):Int=gate.withLock{MusicInfoDb.get(c).dao().clearAll()}
 }

@@ -6,3 +6,5 @@ include(":app")
 include(":lyrickit")
 
 include(":musickit")
+
+include(":recognitionkit")

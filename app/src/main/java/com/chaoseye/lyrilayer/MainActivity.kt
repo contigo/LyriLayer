@@ -119,8 +119,11 @@ class MainActivity : ComponentActivity() {
         var page by rememberSaveable { mutableIntStateOf(0) }
         var settingsScreen by rememberSaveable { mutableStateOf("main") }
         var queueScreen by rememberSaveable { mutableStateOf(false) }
+        var fingerprintScreen by rememberSaveable { mutableStateOf(false) }
+        val fingerprintLive by MusicRecognitionBatch.live.collectAsStateWithLifecycle()
+        BackHandler(enabled=page==0&&fingerprintScreen){fingerprintScreen=false}
         BackHandler(enabled=page==0&&queueScreen){queueScreen=false}
-        BackHandler(enabled=page==0&&searchScreen&&!queueScreen){searchScreen=false;query=""}
+        BackHandler(enabled=page==0&&searchScreen&&!queueScreen&&!fingerprintScreen){searchScreen=false;query=""}
         val queuedLive by AiQueue.live.collectAsStateWithLifecycle()
         val queueDao=remember{AiQueueDb.get(this@MainActivity).dao()}
         val queuedEntries by remember{queueDao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
@@ -190,7 +193,7 @@ class MainActivity : ComponentActivity() {
         var lyricStarting by remember{mutableStateOf(false)}
         var lyricStopping by remember{mutableStateOf(false)}
         val lyricRunning=job?.state?.isFinished==false
-        val resetAllowed=!lyricStarting&&!lyricStopping&&musicJob==null&&!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
+        val resetAllowed=!lyricStarting&&!lyricStopping&&musicJob==null&&!fingerprintLive.running&&!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
         BackHandler(enabled=resetBusy) { }
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
@@ -244,9 +247,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
-        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&(queueScreen||searchScreen))) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false;searchScreen=false;query=""},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
+        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&(queueScreen||searchScreen||fingerprintScreen))) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false;searchScreen=false;fingerprintScreen=false;query=""},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=12.dp,vertical=8.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(if(page==0)6.dp else 10.dp)) {
-                if(page==0&&queueScreen){
+                if(page==0&&fingerprintScreen){
+                    MusicRecognitionScreen(this@MainActivity,tracks,musicMap,allowed&&!resetBusy&&!musicBatchRunning,onBack={fingerprintScreen=false})
+                }else if(page==0&&queueScreen){
                     AiQueueScreen(this@MainActivity,tracks,map,modelReady,onBack={queueScreen=false})
                 }else if(page==2&&settingsScreen=="position"){
                     Row(verticalAlignment=Alignment.CenterVertically){
@@ -335,7 +340,7 @@ class MainActivity : ComponentActivity() {
                             Button(enabled=!musicStopping,onClick={musicStopping=true;musicJob?.cancel()},modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){
                                 Text(if(musicStopping)"중단 중" else "정보 중단",fontSize=12.sp,maxLines=1)
                             }
-                        }else Button(enabled=allowed&&musicJob==null&&!resetBusy,onClick={
+                        }else Button(enabled=allowed&&musicJob==null&&!fingerprintLive.running&&!resetBusy,onClick={
                             musicBatchRunning=true;musicStopping=false
                             musicDone=0;musicTotal=tracks.count{!musicMap.containsKey(it.key)};musicFound=0;musicErrors=0;musicCurrent="";musicBatchResult=""
                             musicJob=scope.launch(start=CoroutineStart.LAZY){
@@ -375,6 +380,9 @@ class MainActivity : ComponentActivity() {
                             OutlinedButton(onClick={queueScreen=true},modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp)){
                                 Text(if(queuedLive.running)"AI "+queuedProgress.percent+"%" else "AI 분석",fontSize=12.sp,maxLines=1)
                             }
+                        }
+                        OutlinedButton(onClick={fingerprintScreen=true},modifier=Modifier.fillMaxWidth(),enabled=!resetBusy){
+                            Text(if(fingerprintLive.running)"음원 지문 검색 · "+fingerprintLive.done+"/"+fingerprintLive.total else "음원 지문 검색",fontSize=13.sp)
                         }
                         if(!allowed) Button(onClick={startAccessPass()}) { Text("음악 파일 접근 허용") }
                         if(musicBatchRunning||musicBatchResult.isNotBlank()){
@@ -746,10 +754,12 @@ class MainActivity : ComponentActivity() {
                         check(!Playback.now.value.playing && !AiQueue.live.value.running && DeviceLyrics.activeAnalysis.value==null){"재생 및 AI 분석을 먼저 중지하세요."}
                         val activeJobs=withContext(Dispatchers.IO){work.getWorkInfosForUniqueWork(BatchWorker.NAME).get()}
                         check(activeJobs.none{!it.state.isFinished}){"가사 일괄 수집을 먼저 중지하세요."}
+                        check(!MusicRecognitionBatch.live.value.running){"음원 지문 검색을 먼저 중지하세요."}
                         withContext(NonCancellable){
                             val queueCount=AiQueue.clearForReset(this@MainActivity)
                             val lyricCount=Repository.clearForReset(this@MainActivity)
                             val musicCount=MusicInfoRepository.clear(this@MainActivity)
+                            MusicRecognitionBatch.reset()
                             val ids=activeJobs.map{it.id.toString()}.toSet()
                             withContext(Dispatchers.IO){
                                 check(getSharedPreferences("batch_progress",MODE_PRIVATE).edit().clear().putStringSet("reset_hidden_ids",ids).commit()){"수집 기록 초기화 실패"}
