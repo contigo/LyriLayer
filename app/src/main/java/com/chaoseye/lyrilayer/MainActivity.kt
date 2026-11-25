@@ -551,6 +551,7 @@ class MainActivity : ComponentActivity() {
                     musicCandidates.forEach{candidate->
                         Text(candidate.candidate.title+" · "+candidate.score+"점")
                         Text(candidate.candidate.artist+" / "+candidate.candidate.album,fontSize=13.sp)
+                        Text(candidate.candidate.source.name+" · "+(candidate.candidate.durationMs/1000)+"초",fontSize=12.sp)
                         TextButton(enabled=musicJob==null,onClick={
                             musicJob=scope.launch(start=CoroutineStart.LAZY){
                                 try{MusicInfoRepository.select(this@MainActivity,t,candidate);musicReview=null}

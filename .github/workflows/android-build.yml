@@ -91,6 +91,12 @@ jobs:
           path: app/build/outputs/bundle/release/app-release.aab
           retention-days: 7
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MusicKit-AAR
+          path: musickit/build/outputs/aar/musickit-release.aar
+          retention-days: 7
+          if-no-files-found: error
       - name: Publish verified APK to GitHub Releases
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -114,4 +120,4 @@ jobs:
             exit 1
           fi
           NOTES="$(printf 'Automated Android development release (com.chaoseye.lyrilayer.debug).\n- Installs separately from com.chaoseye.lyrilayer; independent app data and permissions.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- %s\n- Real-device validation pending.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$APK_SIGNING_NOTE" "$GH_REPO" "$GITHUB_RUN_ID")"
-          gh release create "$TAG" "$APK" --target "$GITHUB_SHA" --title "LyriLayer Dev $TAG" --notes "$NOTES" --prerelease
+          gh release create "$TAG" "$APK" musickit/build/outputs/aar/musickit-release.aar --target "$GITHUB_SHA" --title "LyriLayer Dev $TAG" --notes "$NOTES" --prerelease

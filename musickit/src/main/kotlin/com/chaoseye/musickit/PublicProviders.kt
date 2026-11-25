@@ -11,16 +11,17 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-private class PublicHttp {
+internal class PublicHttp {
     private val client=OkHttpClient.Builder().callTimeout(8,TimeUnit.SECONDS).build()
-    suspend fun get(url:String,params:Map<String,String>):JSONObject=suspendCancellableCoroutine{c->
+    suspend fun get(url:String,params:Map<String,String>):JSONObject=JSONObject(text(url,params))
+    suspend fun text(url:String,params:Map<String,String>,accept:String="application/json"):String=suspendCancellableCoroutine{c->
         val target=url.toHttpUrl().newBuilder().apply{params.forEach{(k,v)->addQueryParameter(k,v)}}.build()
-        val call=client.newCall(Request.Builder().url(target).header("User-Agent","LyriLayer-MusicKit/1.0 (https://github.com/contigo/LyriLayer)").header("Accept","application/json").build())
+        val call=client.newCall(Request.Builder().url(target).header("User-Agent","LyriLayer-MusicKit/1.0 (https://github.com/contigo/LyriLayer)").header("Accept",accept).build())
         c.invokeOnCancellation{call.cancel()}
         call.enqueue(object:Callback{
             override fun onFailure(call:Call,e:IOException){if(c.isActive)c.resumeWithException(e)}
             override fun onResponse(call:Call,response:Response){
-                try{val json=response.use{if(!it.isSuccessful)throw IOException("HTTP "+it.code);JSONObject(it.body?.string()?:throw IOException("empty"))};if(c.isActive)c.resume(json)}
+                try{val json=response.use{if(!it.isSuccessful)throw IOException("HTTP "+it.code);it.body?.string()?:throw IOException("empty")};if(c.isActive)c.resume(json)}
                 catch(e:Exception){if(c.isActive)c.resumeWithException(e)}
             }
         })
@@ -59,4 +60,4 @@ private class Brainz(private val http:PublicHttp):MusicProvider {
     }
     companion object{private val gate=Mutex()}
 }
-fun createMusicKit():MusicKit {val http=PublicHttp();return MusicKit(listOf(ITunes(http),Brainz(http)))}
+fun createMusicKit(includeDomestic:Boolean=true):MusicKit {val http=PublicHttp();return MusicKit((if(includeDomestic)listOf(BugsMusic(http),GenieMusic(http)) else emptyList<MusicProvider>())+listOf(ITunes(http),Brainz(http)))}

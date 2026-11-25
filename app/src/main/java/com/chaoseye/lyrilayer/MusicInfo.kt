@@ -35,6 +35,6 @@ internal object MusicInfoRepository {
     }
     private fun info(t:Track,m:MusicMatch,manual:Boolean)=m.candidate.let{MusicInfo(t.key,it.title,it.artist,it.album,it.durationMs,it.source.name,it.id,m.score,it.artworkUrl,it.releaseDate,manual)}
     suspend fun select(c:Context,t:Track,m:MusicMatch)=gate.withLock{MusicInfoDb.get(c).dao().put(info(t,m,true))}
-    suspend fun canonical(c:Context,t:Track):Track=MusicInfoDb.get(c).dao().get(t.key)?.let{t.copy(title=it.title,artist=it.artist,album=it.album.ifBlank{t.album})}?:t
+    suspend fun canonical(c:Context,t:Track):Track=MusicInfoDb.get(c).dao().get(t.key)?.let{t.copy(title=it.title,artist=it.artist,album=it.album.ifBlank{t.album},fileName="")}?:t
     suspend fun clear(c:Context):Int=gate.withLock{MusicInfoDb.get(c).dao().clearAll()}
 }
