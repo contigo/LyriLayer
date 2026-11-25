@@ -41,8 +41,7 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
     val done=progress.done
     val percent=progress.percent
     Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick=onBack){Text("‹ 뒤로")};Text("AI 분석 목록",fontSize=24.sp)}
-    Text("대상: 가사 없음 "+missing+"곡 · 일반 가사 "+plain+"곡",fontSize=14.sp)
-    Text("추가 가능: 가사 없음 "+availableMissing+"곡 · 일반 가사 "+availablePlain+"곡",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("대상: 가사 없음 "+missing+" · 일반 "+plain+" / 추가 가능: "+availableMissing+" · "+availablePlain,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
     Row(verticalAlignment=Alignment.CenterVertically){
         Text("분석 언어",Modifier.weight(1f),fontSize=13.sp)
         listOf("auto" to "자동","ko" to "한","en" to "영","ja" to "일").forEach{(key,label)->TextButton(onClick={language=key},contentPadding=PaddingValues(2.dp),modifier=Modifier.width(40.dp)){Text(if(language==key)"[$label]" else label)}}
@@ -70,8 +69,8 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
                 }
             }
             Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                Button(enabled=!live.running&&pending>0&&(modelReady||OnlineLyricsSettings.enabled(context)),onClick={AiQueue.start(context)},modifier=Modifier.weight(1f)){Text("분석 시작 / 재개")}
-                OutlinedButton(enabled=live.running&&!live.stopping,onClick={AiQueue.pause()}){Text("중지")}
+                if(live.running)Button(enabled=!live.stopping,onClick={AiQueue.pause()},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){Text(if(live.stopping)"중단 중…" else "분석 중단")}
+                else Button(enabled=pending>0&&(modelReady||OnlineLyricsSettings.enabled(context)),onClick={AiQueue.start(context)},modifier=Modifier.fillMaxWidth()){Text("분석 시작 / 재개")}
             }
             if(!modelReady)Text("온라인 가사를 먼저 검색합니다. 검색 실패 시 AI 모델이 필요합니다.",fontSize=12.sp)
         }
@@ -83,7 +82,7 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
             FilterChip(selected=filter==id,onClick={filter=id},label={Text("$label $count",maxLines=1)})
         }
     }
-    LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
+    LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
         if(visibleEntries.isEmpty())item{Text("해당 상태의 곡이 없습니다.",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         items(visibleEntries,key={it.key}){item->
             Column(Modifier.fillMaxWidth()){
@@ -94,8 +93,13 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
                         Text(when(item.state){"pending"->"대기";"running"->"분석 중 "+live.percent+"%";"review"->"검토 필요";"saved"->"저장 완료";"failed"->"실패";else->"건너뜀"},color=if(item.state=="failed")MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,fontSize=13.sp)
                         if(item.message.isNotBlank())Text(item.message,fontSize=12.sp)
                     }
-                    if(item.state=="review")TextButton(onClick={review=item}){Text("검토")}
-                    if(item.state!="running")TextButton(onClick={AiQueue.remove(context,item.key)}){Text("제거")}
+                    if(item.state!="running"){
+                        var menu by remember(item.key){mutableStateOf(false)}
+                        Box{IconButton(onClick={menu=true}){Text("⋮",fontSize=24.sp)};DropdownMenu(expanded=menu,onDismissRequest={menu=false}){
+                            if(item.state=="review")DropdownMenuItem(text={Text("검토")},onClick={menu=false;review=item})
+                            DropdownMenuItem(text={Text("제거")},onClick={menu=false;AiQueue.remove(context,item.key)})
+                        }}
+                    }
                 }
                 if(item.state=="running"&&live.key==item.key){
                     LinearProgressIndicator(progress={live.percent/100f},modifier=Modifier.fillMaxWidth())

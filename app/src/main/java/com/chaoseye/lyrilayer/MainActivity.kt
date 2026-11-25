@@ -95,6 +95,8 @@ class MainActivity : ComponentActivity() {
         val aiColor=if(androidx.compose.foundation.isSystemInDarkTheme())Color(0xFFCEB5FF) else Color(0xFF6942AD)
         fun resultColor(status:String):Color=when(status){"FOUND","INSTRUMENTAL"->successColor;"NOT_FOUND","ERROR"->failureColor;"RUNNING"->runningColor;else->neutralColor}
         var query by remember { mutableStateOf("") }
+        var filterMenu by remember{mutableStateOf(false)}
+        var collectionDetails by rememberSaveable{mutableStateOf(false)}
         var lyricFilter by rememberSaveable { mutableStateOf("all") }
         var page by rememberSaveable { mutableIntStateOf(0) }
         var settingsScreen by rememberSaveable { mutableStateOf("main") }
@@ -224,7 +226,7 @@ class MainActivity : ComponentActivity() {
         }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
         Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&queueScreen)) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=12.dp,vertical=8.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(if(page==0)6.dp else 10.dp)) {
                 if(page==0&&queueScreen){
                     AiQueueScreen(this@MainActivity,tracks,map,modelReady,onBack={queueScreen=false})
                 }else if(page==2&&settingsScreen=="position"){
@@ -274,7 +276,10 @@ class MainActivity : ComponentActivity() {
 
                     if(!listenerAllowed||!overlayAllowed)Button(onClick={startAccessPass()}){Text("필수 권한 설정")}
                 }else{
-                Text("LyriLayer",style=MaterialTheme.typography.headlineMedium,fontSize=30.sp)
+                if(page==0)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                    Text("LyriLayer",style=MaterialTheme.typography.titleLarge,modifier=Modifier.weight(1f))
+                    TextButton(onClick={refresh.intValue++}){Text("↻ 새로고침",fontSize=12.sp)}
+                }else if(page==1)Text("실시간 가사",style=MaterialTheme.typography.titleLarge)
                 when(page) {
                     0 -> {
                         if(updateSupported&&(updateState.stage=="available"||updateState.stage=="ready")){
@@ -285,18 +290,19 @@ class MainActivity : ComponentActivity() {
                         }
                         val found=tracks.count { LyricDisplay.registered(map[it.key]?.status) }
                         val aiCount=tracks.count { LyricDisplay.aiGenerated(map[it.key]?.status,map[it.key]?.source) }
-                        Text(buildAnnotatedString {
-                            append("전체 ${tracks.size}곡 · ")
-                            withStyle(SpanStyle(color=successColor)){append("등록 $found")}
-                            append(" · ")
-                            withStyle(SpanStyle(color=aiColor)){append("AI 생성 $aiCount")}
-                            append(" · ")
-                            withStyle(SpanStyle(color=neutralColor)){append("미등록 ${tracks.size-found}")}
-                        },fontSize=18.sp)
-                        Text("음악 정보 확인 "+tracks.count{musicMap.containsKey(it.key)}+" / "+tracks.size+"곡",color=successColor)
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)){
+                            listOf("전체" to tracks.size,"정보" to tracks.count{musicMap.containsKey(it.key)},"가사" to found,"AI" to aiCount).forEach{(label,count)->
+                                Surface(modifier=Modifier.weight(1f),shape=RoundedCornerShape(8.dp),color=MaterialTheme.colorScheme.surfaceVariant){
+                                    Column(Modifier.padding(vertical=5.dp),horizontalAlignment=Alignment.CenterHorizontally){
+                                        Text(label,fontSize=11.sp);Text(count.toString(),style=MaterialTheme.typography.titleMedium)
+                                    }
+                                }
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically){
                         if(musicBatchRunning){
-                            Button(enabled=!musicStopping,onClick={musicStopping=true;musicJob?.cancel()},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){
-                                Text(if(musicStopping)"수집 중단 중…" else "음악 정보 수집 중단")
+                            Button(enabled=!musicStopping,onClick={musicStopping=true;musicJob?.cancel()},modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){
+                                Text(if(musicStopping)"중단 중" else "정보 중단",fontSize=12.sp,maxLines=1)
                             }
                         }else Button(enabled=allowed&&musicJob==null&&!resetBusy,onClick={
                             musicBatchRunning=true;musicStopping=false
@@ -313,13 +319,9 @@ class MainActivity : ComponentActivity() {
                                 }catch(e:CancellationException){musicProgress="음악 정보 수집 중단";throw e}
                                 finally{musicJob=null;musicBatchRunning=false;musicStopping=false}
                             }.also{it.start()}
-                        },modifier=Modifier.fillMaxWidth()){Text("음악 정보 일괄 수집")}
-                        if(musicProgress.isNotBlank())Text(musicProgress,fontSize=13.sp)
-                        Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
-                        if(!allowed) Button(onClick={startAccessPass()}) { Text("음악 파일 접근 허용") }
-                        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        },modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp)){Text("음악 정보",fontSize=12.sp,maxLines=1)}
                             if(lyricRunning||lyricStopping){
-                                Button(modifier=Modifier.weight(1f),enabled=!lyricStopping,onClick={
+                                Button(modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp),enabled=!lyricStopping,onClick={
                                     lyricStopping=true
                                     scope.launch{
                                         try{val operation=work.cancelUniqueWork(BatchWorker.NAME);withContext(Dispatchers.IO){operation.result.get()}}
@@ -327,21 +329,23 @@ class MainActivity : ComponentActivity() {
                                         finally{lyricStopping=false}
                                     }
                                 },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){
-                                    Text(if(lyricStopping)"수집 중단 중…" else "가사 수집 중단",fontSize=16.sp)
+                                    Text(if(lyricStopping)"중단 중" else "가사 중단",fontSize=12.sp,maxLines=1)
                                 }
-                            }else Button(modifier=Modifier.weight(1f),enabled=allowed&&!lyricStarting&&!resetBusy,onClick={
+                            }else Button(modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp),enabled=allowed&&!lyricStarting&&!resetBusy,onClick={
                                 lyricStarting=true
                                 scope.launch{
                                     try{val operation=BatchWorker.start(this@MainActivity);withContext(Dispatchers.IO){operation.result.get()}}
                                     catch(e:CancellationException){throw e}catch(e:Exception){messageStatus="ERROR";message="수집 시작 실패: "+e.message}
                                     finally{lyricStarting=false}
                                 }
-                            }){Text(if(lyricStarting)"수집 시작 중…" else "가사 일괄 수집",fontSize=16.sp)}
-                            OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침",fontSize=16.sp) }
+                            }){Text(if(lyricStarting)"시작 중" else "가사 수집",fontSize=12.sp,maxLines=1)}
+                            OutlinedButton(onClick={queueScreen=true},modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=4.dp)){
+                                Text(if(queuedLive.running)"AI "+queuedProgress.percent+"%" else "AI 분석",fontSize=12.sp,maxLines=1)
+                            }
                         }
-                        OutlinedButton(onClick={queueScreen=true},modifier=Modifier.fillMaxWidth()){
-                            Text(if(queuedLive.running)"✦ AI 분석 목록 · 처리 중 "+queuedProgress.percent+"%" else "✦ AI 분석 목록 / 일괄 분석",fontSize=16.sp)
-                        }
+                        if(!allowed) Button(onClick={startAccessPass()}) { Text("음악 파일 접근 허용") }
+                        if(musicProgress.isNotBlank())Text(musicProgress,fontSize=12.sp,maxLines=2)
+
                         if(job!=null) {
                             val data=when{
                                 job.state==WorkInfo.State.SUCCEEDED || job.state==WorkInfo.State.FAILED -> job.outputData
@@ -351,12 +355,14 @@ class MainActivity : ComponentActivity() {
                             val done=data.getInt("done",0);val total=data.getInt("total",0)
                             val percent=CollectionProgress.percent(done,total,job.state==WorkInfo.State.SUCCEEDED)
                             Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                                Column(Modifier.padding(horizontal=10.dp,vertical=4.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){
                                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                                        Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기 / 이어서 처리"},style=MaterialTheme.typography.titleMedium,fontSize=18.sp)
-                                        Text("$percent%",style=MaterialTheme.typography.headlineSmall,fontSize=26.sp,color=when(job.state){WorkInfo.State.SUCCEEDED->successColor;WorkInfo.State.FAILED->failureColor;WorkInfo.State.CANCELLED->neutralColor;else->runningColor})
+                                        Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기 / 이어서 처리"},style=MaterialTheme.typography.titleSmall,fontSize=14.sp)
+                                        Text("$percent%",style=MaterialTheme.typography.titleMedium,fontSize=16.sp,color=when(job.state){WorkInfo.State.SUCCEEDED->successColor;WorkInfo.State.FAILED->failureColor;WorkInfo.State.CANCELLED->neutralColor;else->runningColor})
                                     }
-                                    LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth().height(8.dp))
+                                    if(!job.state.isFinished)LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth().height(4.dp))
+                                    if(job.state.isFinished)TextButton(onClick={collectionDetails=!collectionDetails},contentPadding=PaddingValues(0.dp)){Text(if(collectionDetails)"상세 접기" else "결과 상세",fontSize=12.sp)}
+                                    if(!job.state.isFinished||collectionDetails){
                                     Text("처리 $done / $total 곡 · 남은 곡 ${(total-done).coerceAtLeast(0)}",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                                     Text(buildAnnotatedString {
                                         withStyle(SpanStyle(color=successColor)){append("성공 ${data.getInt("found",0)}")}
@@ -367,21 +373,27 @@ class MainActivity : ComponentActivity() {
                                     },style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                                     data.getString("current")?.takeIf{it.isNotBlank()&&!job.state.isFinished}?.let{Text("검색 중: $it",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
                                     if(data.getInt("retryPending",0)>0)Text("자동 재검색 예정 "+data.getInt("retryPending",0)+"곡",fontSize=13.sp)
-                                    data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
+                                    data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall,fontSize=12.sp)}
+                                    }
                                 }
                             }
                         }
-                        OutlinedTextField(query,{query=it},label={Text("곡 제목 / 가수 검색")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                            listOf("all" to "전체","ai" to "AI 가사","missing" to "미등록").forEach{(value,label)->
-                                FilterChip(selected=lyricFilter==value,onClick={lyricFilter=value},label={Text(label)},modifier=Modifier.weight(1f))
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){
+                            OutlinedTextField(query,{query=it},placeholder={Text("제목 / 가수 / 앨범",fontSize=13.sp)},modifier=Modifier.weight(1f),singleLine=true,textStyle=MaterialTheme.typography.bodySmall)
+                            Box{
+                                TextButton(onClick={filterMenu=true},contentPadding=PaddingValues(horizontal=4.dp)){Text(when(lyricFilter){"ai"->"AI 가사";"missing"->"미등록";else->"전체"}+" ▾",fontSize=12.sp)}
+                                DropdownMenu(expanded=filterMenu,onDismissRequest={filterMenu=false}){
+                                    listOf("all" to "전체","ai" to "AI 가사","missing" to "미등록").forEach{(value,label)->
+                                        DropdownMenuItem(text={Text(label)},onClick={lyricFilter=value;filterMenu=false})
+                                    }
+                                }
                             }
                         }
                         if(aiTarget!=null)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                             Text("✦ "+aiTarget?.title.orEmpty()+" · "+when{aiRunning->"AI 분석 중 $aiProgress%";aiFailed->"분석 실패 / 중단";aiResult.isNotBlank()->"검토 대기";else->"분석 준비"},color=aiColor,modifier=Modifier.weight(1f),fontSize=14.sp)
                             TextButton(onClick={aiTrack=aiTarget}){Text("열기")}
                         }
-                        Text(message,color=if(messageStatus=="AI")aiColor else resultColor(messageStatus))
+                        if(message.isNotBlank())Text(message,color=if(messageStatus=="AI")aiColor else resultColor(messageStatus),fontSize=12.sp,maxLines=2)
                         val visibleTracks=tracks.filter{t->
                             val l=map[t.key]
                             (t.title.contains(query,true)||t.artist.contains(query,true)||musicMap[t.key]?.title?.contains(query,true)==true||musicMap[t.key]?.artist?.contains(query,true)==true||musicMap[t.key]?.album?.contains(query,true)==true)&&LyricDisplay.visible(lyricFilter,l?.status,l?.source,aiTarget?.key==t.key)
@@ -398,24 +410,34 @@ class MainActivity : ComponentActivity() {
                                 else -> LyricDisplay.label(l?.status,l?.source,!l?.synced.isNullOrBlank())
                             }
                             val rowColor=when{activeAi&&aiFailed->failureColor;activeAi||generated->aiColor;else->resultColor(l?.status.orEmpty())}
-                            ListItem(headlineContent={Text(musicMap[t.key]?.title?:t.title)},supportingContent={
-                                Column(verticalArrangement=Arrangement.spacedBy(3.dp)){
-                                    Text(buildAnnotatedString{append(musicMap[t.key]?.artist?:t.artist);append(" · ");withStyle(SpanStyle(color=rowColor)){append(rowLabel)}})
-                                    val info=musicMap[t.key]
-                                    Text(if(info==null)"음악 정보 미확인" else info.album+" · 정보 확인 "+info.score+"점",fontSize=12.sp,color=if(info==null)neutralColor else successColor)
-                                    TextButton(enabled=musicJob==null,onClick={
-                                        musicReview=t;musicCandidates=emptyList()
+                            var rowMenu by remember(t.key){mutableStateOf(false)}
+                            val info=musicMap[t.key]
+                            Row(Modifier.fillMaxWidth().heightIn(min=56.dp).padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(1.dp)){
+                                    Text(info?.title?:t.title,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    Text(listOf(info?.artist?:t.artist,info?.album?:t.album).filter{it.isNotBlank()}.joinToString(" · "),fontSize=12.sp,color=neutralColor,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    Text(buildAnnotatedString{withStyle(SpanStyle(color=if(info==null)neutralColor else successColor)){append(if(info==null)"정보 미확인" else "정보 ✓")};append(" · ");withStyle(SpanStyle(color=rowColor)){append(rowLabel)}},fontSize=11.sp,maxLines=1)
+                                    if(activeAi&&aiRunning)LinearProgressIndicator(progress={aiProgress/100f},modifier=Modifier.fillMaxWidth())
+                                }
+                                Box{
+                                    IconButton(onClick={rowMenu=true}){Text("⋮",fontSize=24.sp)}
+                                    DropdownMenu(expanded=rowMenu,onDismissRequest={rowMenu=false}){
+                                        DropdownMenuItem(text={Text("음악 정보 확인 / 수정")},enabled=musicJob==null,onClick={rowMenu=false;
+                                            musicReview=t;musicCandidates=emptyList()
                                         musicJob=scope.launch(start=CoroutineStart.LAZY){
                                             try{val result=MusicInfoRepository.search(this@MainActivity,t);musicCandidates=result.matches;musicProgress=if(result.errors.isEmpty())"후보 "+result.matches.size+"개" else "일부 제공처 오류 · 후보 "+result.matches.size+"개"}
                                             catch(e:CancellationException){throw e}catch(e:Exception){musicProgress="음악 정보 검색 실패"}
                                             finally{musicJob=null}
                                         }.also{it.start()}
-                                    },contentPadding=PaddingValues(0.dp)){Text("음악 정보 확인 / 수정",fontSize=13.sp)}
-                                    if(l?.status=="FOUND"&&(!l.plain.isBlank()||l.synced.isNotBlank()))TextButton(onClick={syncTrack=t},contentPadding=PaddingValues(0.dp)){Text("가사 관리 / 싱크",fontSize=13.sp)}
-                                    if(activeAi&&aiRunning)LinearProgressIndicator(progress={aiProgress/100f},modifier=Modifier.fillMaxWidth(),color=aiColor)
-                                    if(!LyricDisplay.registered(l?.status)||activeAi)TextButton(onClick={openAi(t)},contentPadding=PaddingValues(0.dp)){Text(if(activeAi)"AI 분석 열기" else "✦ AI 가사 분석",color=aiColor,fontSize=13.sp)}
+                                        })
+                                        DropdownMenuItem(text={Text("가사 검색")},onClick={rowMenu=false;scope.launch { messageStatus="RUNNING"; message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); messageStatus=result.status; message="${t.title}: ${when { result.status=="INSTRUMENTAL" -> "연주곡"; result.synced.isNotBlank() -> "싱크 가사 저장 완료"; result.status=="FOUND" -> "일반 가사 저장 완료"; else -> "가사 없음 · 직접 검색 또는 AI 분석 가능" }}" } catch(e: CancellationException){throw e} catch(e: Exception){messageStatus="ERROR";message="검색 오류: ${e.message}"} }})
+                                        DropdownMenuItem(text={Text("가사 직접 검색")},onClick={rowMenu=false;manualSearch=t})
+                                        DropdownMenuItem(text={Text("가사 편집")},onClick={rowMenu=false;edit=t})
+                                        if(l?.status=="FOUND"&&(!l.plain.isBlank()||l.synced.isNotBlank()))DropdownMenuItem(text={Text("가사 관리 / 싱크")},onClick={rowMenu=false;syncTrack=t})
+                                        if(!LyricDisplay.registered(l?.status)||activeAi)DropdownMenuItem(text={Text(if(activeAi)"AI 분석 열기" else "AI 가사 분석")},onClick={rowMenu=false;openAi(t)})
+                                    }
                                 }
-                            },trailingContent={Row { TextButton(onClick={manualSearch=t}) { Text("직접") }; TextButton(onClick={edit=t}) { Text("편집") }; TextButton(onClick={scope.launch { messageStatus="RUNNING"; message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); messageStatus=result.status; message="${t.title}: ${when { result.status=="INSTRUMENTAL" -> "연주곡"; result.synced.isNotBlank() -> "싱크 가사 저장 완료"; result.status=="FOUND" -> "일반 가사 저장 완료"; else -> "가사 없음 · 직접 검색 또는 AI 분석 가능" }}" } catch(e: CancellationException){throw e} catch(e: Exception){messageStatus="ERROR";message="검색 오류: ${e.message}"} }}) { Text("검색") } }})
+                            }
                             HorizontalDivider()
                         } }
                     }
@@ -445,6 +467,22 @@ class MainActivity : ComponentActivity() {
                         } else Text(now.message)
                     }
                     else -> {
+                        if(settingsScreen=="main"){
+                            Text("설정",style=MaterialTheme.typography.titleLarge)
+                            val categories=listOf(Triple("permissions","앱 권한","필수 권한 "+listOf(allowed,listenerAllowed,overlayAllowed).count{it}+"/3"),Triple("floating","플로팅 가사","표시 방식 · 위치 · 테스트"),Triple("music","음악 정보","MusicKit · 검색 제공처"),Triple("lyrics","가사 검색","LyricKit · 온라인 검색"),Triple("ai","AI 분석","모델 · 성능 · 자동 저장"),Triple("data","데이터 관리","오류 기록 · DB 초기화"))+if(updateSupported)listOf(Triple("update","앱 업데이트",AppUpdates.current(this@MainActivity)))else emptyList()
+                            categories.forEach{(key,title,summary)->
+                                Surface(onClick={settingsScreen=key},modifier=Modifier.fillMaxWidth()){
+                                    Row(Modifier.padding(vertical=10.dp,horizontal=4.dp),verticalAlignment=Alignment.CenterVertically){
+                                        Column(Modifier.weight(1f)){Text(title,style=MaterialTheme.typography.titleMedium);Text(summary,fontSize=12.sp,color=neutralColor)}
+                                        Text("›",fontSize=22.sp,color=neutralColor)
+                                    }
+                                }
+                                HorizontalDivider()
+                            }
+                        }else{
+                            Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")};Text(when(settingsScreen){"permissions"->"앱 권한";"floating"->"플로팅 가사";"music"->"음악 정보";"lyrics"->"가사 검색";"ai"->"AI 분석";"data"->"데이터 관리";else->"설정"},style=MaterialTheme.typography.titleLarge)}
+                            when(settingsScreen){
+                                "permissions"->{
                         Text("삼성 뮤직 연결",style=MaterialTheme.typography.titleLarge)
                         Text("알림 접근 권한은 삼성 뮤직 MediaSession을 읽기 위해 사용합니다. 알림 본문은 수집하지 않습니다.")
                         Text("필수 권한 · ${listOf(allowed,listenerAllowed,overlayAllowed).count{it}} / 3 허용",fontSize=16.sp,color=if(allowed&&listenerAllowed&&overlayAllowed)successColor else failureColor)
@@ -453,6 +491,9 @@ class MainActivity : ComponentActivity() {
                         if(permissionError.isNotBlank())Text(permissionError,color=failureColor,fontSize=14.sp)
                         Button(onClick={requestAccess(RequiredAccess.LISTENER)}) { Text("알림 접근 설정") }
                         Button(onClick={requestAccess(RequiredAccess.OVERLAY)}) { Text("다른 앱 위에 표시 권한") }
+
+                                }
+                                "floating"->{
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
                         Text("음악 재생 중 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
                         Row(verticalAlignment=Alignment.CenterVertically){
@@ -490,24 +531,23 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         HorizontalDivider()
+
+                                }
+                                "music"->{
+                                    Text("MusicKit · 벅스 / 지니 / iTunes KR / MusicBrainz")
+                                    Text("별도 API 키 없이 기기에서 직접 조회하며, 확인된 정보는 앱 내부 DB에 저장합니다.",fontSize=13.sp)
+                                    Text("음악 정보 수집 및 검토는 라이브러리에서 실행합니다.",fontSize=13.sp)
+                                }
+                                "lyrics"->{
                         Row(verticalAlignment=Alignment.CenterVertically){
                             Column(Modifier.weight(1f)){Text("AI 분석 전 온라인 가사 검색");Text("LyricKit · 지니 / 벅스",fontSize=12.sp)}
                             Switch(onlineBeforeAi,{onlineBeforeAi=it;aiPrefs.edit().putBoolean(OnlineLyricsSettings.ENABLED,it).apply()})
                         }
                         Text("온라인 검색 시 곡 제목, 가수, 앨범, 길이를 지니·벅스 및 보조 검색 서비스 LRCLIB에 전송할 수 있습니다. 음악 파일이나 알림은 전송하지 않습니다.")
                         HorizontalDivider()
-                        if(updateSupported){
-                            OutlinedButton(onClick={settingsScreen="update"},modifier=Modifier.fillMaxWidth()){
-                                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                                    Column(Modifier.weight(1f)){
-                                        Text("앱 업데이트",fontSize=16.sp)
-                                        Text("현재 "+AppUpdates.current(this@MainActivity)+(if(updateState.release!=null)" · "+updateState.release?.tag.orEmpty() else ""),fontSize=12.sp,color=neutralColor)
-                                    }
-                                    Text("›",fontSize=24.sp)
+
                                 }
-                            }
-                            HorizontalDivider()
-                        }
+                                "data"->{
                         OutlinedButton(onClick={searchLogOpen=true},modifier=Modifier.fillMaxWidth()){Text("가사 수집 오류 기록")}
                         Text("최근 일괄 수집에서 발생한 제공처별 오류를 확인합니다.",fontSize=12.sp)
                         HorizontalDivider()
@@ -519,6 +559,9 @@ class MainActivity : ComponentActivity() {
                         if(!resetAllowed&&!resetBusy)Text("음악 재생, 가사 검색 및 AI 분석/일괄 수집을 중지한 후 초기화하세요.",fontSize=12.sp,color=neutralColor)
                         if(resetStatus.isNotBlank())Text(resetStatus,fontSize=14.sp)
                         HorizontalDivider()
+
+                                }
+                                "ai"->{
                         Text("온디바이스 AI 가사",style=MaterialTheme.typography.titleLarge)
                         val performanceBusy=modelBusy||aiRunning||queuedLive.running||activeAnalysis!=null
                         Text("AI 분석 결과 저장 설정",fontSize=18.sp)
@@ -563,6 +606,10 @@ class MainActivity : ComponentActivity() {
                         }}){Text(if(modelReady)"모델 무결성 확인" else "AI 모델 다운로드")}
                         if(modelBusy)LinearProgressIndicator(progress={modelProgress/100f},modifier=Modifier.fillMaxWidth())
                         if(modelMessage.isNotBlank())Text(modelMessage,style=MaterialTheme.typography.bodySmall)
+
+                                }
+                            }
+                        }
                     }
                 }
                 }
