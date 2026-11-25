@@ -72,11 +72,11 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
             if(p.getString("id","")!=id)return Data.EMPTY
             return workDataOf("done" to p.getInt("done",0),"total" to p.getInt("total",0),"found" to p.getInt("found",0),"missing" to p.getInt("missing",0),"errors" to p.getInt("errors",0),"lastError" to p.getString("lastError","").orEmpty(),"retryPending" to p.getStringSet("retryUris",emptySet()).orEmpty().size,"errorLog" to p.getString("errorLog","").orEmpty().takeLast(2700))
         }
-        fun start(c:Context) {
+        fun start(c:Context):Operation {
             val request=OneTimeWorkRequestBuilder<BatchWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.LINEAR,10,java.util.concurrent.TimeUnit.SECONDS).build()
-            WorkManager.getInstance(c).enqueueUniqueWork(NAME,ExistingWorkPolicy.KEEP,request)
+            return WorkManager.getInstance(c).enqueueUniqueWork(NAME,ExistingWorkPolicy.KEEP,request)
         }
     }
 }

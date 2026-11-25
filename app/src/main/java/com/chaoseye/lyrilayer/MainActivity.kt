@@ -80,6 +80,8 @@ class MainActivity : ComponentActivity() {
         val musicRows by remember{musicDao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
         val musicMap=remember(musicRows){musicRows.associateBy{it.key}}
         var musicJob by remember{mutableStateOf<Job?>(null)}
+        var musicBatchRunning by remember{mutableStateOf(false)}
+        var musicStopping by remember{mutableStateOf(false)}
         var musicProgress by remember{mutableStateOf("")}
         var musicReview by remember{mutableStateOf<Track?>(null)}
         var musicCandidates by remember{mutableStateOf(emptyList<com.chaoseye.musickit.MusicMatch>())}
@@ -164,7 +166,10 @@ class MainActivity : ComponentActivity() {
         var hiddenBatchIds by remember { mutableStateOf(getSharedPreferences("batch_progress",MODE_PRIVATE).getStringSet("reset_hidden_ids",emptySet())?.toSet().orEmpty()) }
         val visibleJobs=jobs.filter { it.id.toString() !in hiddenBatchIds }
         val job=visibleJobs.firstOrNull { !it.state.isFinished } ?: visibleJobs.firstOrNull()
-        val resetAllowed=musicJob==null&&!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
+        var lyricStarting by remember{mutableStateOf(false)}
+        var lyricStopping by remember{mutableStateOf(false)}
+        val lyricRunning=job?.state?.isFinished==false
+        val resetAllowed=!lyricStarting&&!lyricStopping&&musicJob==null&&!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
         BackHandler(enabled=resetBusy) { }
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
@@ -289,7 +294,12 @@ class MainActivity : ComponentActivity() {
                             withStyle(SpanStyle(color=neutralColor)){append("미등록 ${tracks.size-found}")}
                         },fontSize=18.sp)
                         Text("음악 정보 확인 "+tracks.count{musicMap.containsKey(it.key)}+" / "+tracks.size+"곡",color=successColor)
-                        Button(enabled=allowed&&musicJob==null,onClick={
+                        if(musicBatchRunning){
+                            Button(enabled=!musicStopping,onClick={musicStopping=true;musicJob?.cancel()},modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){
+                                Text(if(musicStopping)"수집 중단 중…" else "음악 정보 수집 중단")
+                            }
+                        }else Button(enabled=allowed&&musicJob==null&&!resetBusy,onClick={
+                            musicBatchRunning=true;musicStopping=false
                             musicJob=scope.launch(start=CoroutineStart.LAZY){
                                 try{
                                     val pending=tracks.filter{!musicMap.containsKey(it.key)}
@@ -301,15 +311,32 @@ class MainActivity : ComponentActivity() {
                                     }
                                     musicProgress="음악 정보 수집 완료 · 확인 "+foundInfo+"곡 · 제공처 오류 "+failures+"곡"
                                 }catch(e:CancellationException){musicProgress="음악 정보 수집 중단";throw e}
-                                finally{musicJob=null}
+                                finally{musicJob=null;musicBatchRunning=false;musicStopping=false}
                             }.also{it.start()}
                         },modifier=Modifier.fillMaxWidth()){Text("음악 정보 일괄 수집")}
-                        if(musicJob!=null)TextButton(onClick={musicJob?.cancel()}){Text("음악 정보 수집 중단")}
                         if(musicProgress.isNotBlank())Text(musicProgress,fontSize=13.sp)
                         Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                         if(!allowed) Button(onClick={startAccessPass()}) { Text("음악 파일 접근 허용") }
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                            Button(onClick={BatchWorker.start(this@MainActivity)},enabled=allowed && job?.state?.isFinished!=false) { Text("가사 일괄 수집",fontSize=16.sp) }
+                            if(lyricRunning||lyricStopping){
+                                Button(modifier=Modifier.weight(1f),enabled=!lyricStopping,onClick={
+                                    lyricStopping=true
+                                    scope.launch{
+                                        try{val operation=work.cancelUniqueWork(BatchWorker.NAME);withContext(Dispatchers.IO){operation.result.get()}}
+                                        catch(e:CancellationException){throw e}catch(e:Exception){messageStatus="ERROR";message="수집 중단 실패: "+e.message}
+                                        finally{lyricStopping=false}
+                                    }
+                                },colors=ButtonDefaults.buttonColors(containerColor=MaterialTheme.colorScheme.error,contentColor=MaterialTheme.colorScheme.onError)){
+                                    Text(if(lyricStopping)"수집 중단 중…" else "가사 수집 중단",fontSize=16.sp)
+                                }
+                            }else Button(modifier=Modifier.weight(1f),enabled=allowed&&!lyricStarting&&!resetBusy,onClick={
+                                lyricStarting=true
+                                scope.launch{
+                                    try{val operation=BatchWorker.start(this@MainActivity);withContext(Dispatchers.IO){operation.result.get()}}
+                                    catch(e:CancellationException){throw e}catch(e:Exception){messageStatus="ERROR";message="수집 시작 실패: "+e.message}
+                                    finally{lyricStarting=false}
+                                }
+                            }){Text(if(lyricStarting)"수집 시작 중…" else "가사 일괄 수집",fontSize=16.sp)}
                             OutlinedButton(onClick={refresh.intValue++}) { Text("새로고침",fontSize=16.sp) }
                         }
                         OutlinedButton(onClick={queueScreen=true},modifier=Modifier.fillMaxWidth()){
@@ -341,7 +368,6 @@ class MainActivity : ComponentActivity() {
                                     data.getString("current")?.takeIf{it.isNotBlank()&&!job.state.isFinished}?.let{Text("검색 중: $it",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
                                     if(data.getInt("retryPending",0)>0)Text("자동 재검색 예정 "+data.getInt("retryPending",0)+"곡",fontSize=13.sp)
                                     data.getString("lastError")?.takeIf{it.isNotBlank()}?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall,fontSize=14.sp)}
-                                    if(!job.state.isFinished) TextButton(onClick={work.cancelUniqueWork(BatchWorker.NAME)}){Text("수집 중단",fontSize=16.sp)}
                                 }
                             }
                         }
