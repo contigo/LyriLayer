@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
@@ -97,6 +98,7 @@ class MainActivity : ComponentActivity() {
         var musicCurrent by remember{mutableStateOf("")}
         var musicBatchResult by remember{mutableStateOf("")}
         val musicBarColor=if(androidx.compose.foundation.isSystemInDarkTheme())Color(0xFF90CAF9) else Color(0xFF1565C0)
+        var musicDetail by remember{mutableStateOf<Track?>(null)}
         var musicReview by remember{mutableStateOf<Track?>(null)}
         var musicCandidates by remember{mutableStateOf(emptyList<com.chaoseye.musickit.MusicMatch>())}
         var tracks by remember { mutableStateOf(emptyList<Track>()) }
@@ -459,8 +461,8 @@ class MainActivity : ComponentActivity() {
                             val rowColor=when{activeAi&&aiFailed->failureColor;activeAi||generated->aiColor;else->resultColor(l?.status.orEmpty())}
                             var rowMenu by remember(t.key){mutableStateOf(false)}
                             val info=musicMap[t.key]
-                            Row(Modifier.fillMaxWidth().heightIn(min=56.dp).padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically){
-                                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(1.dp)){
+                            Row(Modifier.fillMaxWidth().heightIn(min=56.dp),verticalAlignment=Alignment.CenterVertically){
+                                Column(Modifier.weight(1f).clickable{musicDetail=t}.padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(1.dp)){
                                     Text(info?.title?:t.title,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     Text(listOf(info?.artist?:t.artist,info?.album?:t.album).filter{it.isNotBlank()}.joinToString(" · "),fontSize=12.sp,color=neutralColor,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     Text(buildAnnotatedString{withStyle(SpanStyle(color=if(info==null)neutralColor else successColor)){append(if(info==null)"정보 미확인" else "정보 ✓")};append(" · ");withStyle(SpanStyle(color=rowColor)){append(rowLabel)}},fontSize=11.sp,maxLines=1)
@@ -662,12 +664,49 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        musicDetail?.let{t->
+            val info=musicMap[t.key]
+            val lyric=map[t.key]
+            fun durationText(ms:Long):String=if(ms<=0)"정보 없음" else java.lang.String.format(java.util.Locale.ROOT,"%d:%02d",ms/60000,(ms/1000)%60)
+            val providerName=when(info?.provider){"BUGS"->"벅스";"GENIE"->"지니";"ITUNES_KR"->"iTunes (한국)";"MUSICBRAINZ"->"MusicBrainz";else->info?.provider.orEmpty()}
+            AlertDialog(onDismissRequest={musicDetail=null},title={Text("음악 정보")},text={
+                Column(Modifier.heightIn(max=460.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    Text(info?.title?:t.title,style=MaterialTheme.typography.titleLarge)
+                    Text(info?.artist?:t.artist,style=MaterialTheme.typography.bodyLarge)
+                    Text(if(info==null)"음원 정보 미확인" else if(info.userConfirmed)"사용자 확인 완료" else "자동 확인 완료",color=if(info==null)neutralColor else successColor,fontSize=13.sp)
+                    HorizontalDivider()
+                    val fields=if(info==null)listOf("앨범" to t.album,"재생 시간" to durationText(t.duration)) else listOf("앨범" to info.album,"재생 시간" to durationText(info.durationMs),"발매일" to info.releaseDate.take(10),"검색 제공처" to providerName,"일치 점수" to (info.score.toString()+"점"),"제공처 ID" to info.providerId)
+                    fields.forEach{(label,value)->
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                            Text(label,Modifier.width(88.dp),color=neutralColor,fontSize=13.sp)
+                            Text(value.ifBlank{"정보 없음"},Modifier.weight(1f),fontSize=14.sp)
+                        }
+                    }
+                    HorizontalDivider()
+                    Text("가사: "+LyricDisplay.label(lyric?.status,lyric?.source,!lyric?.synced.isNullOrBlank()),fontSize=13.sp)
+                    if(info!=null){
+                        Text("원본 파일 정보",style=MaterialTheme.typography.titleSmall)
+                        Text(listOf(t.title,t.artist,t.album,durationText(t.duration)).filter{it.isNotBlank()}.joinToString(" · "),fontSize=12.sp,color=neutralColor)
+                    }else Text("아직 저장된 검색 정보가 없습니다. 아래 검색 버튼으로 확인할 수 있습니다.",fontSize=12.sp,color=neutralColor)
+                }
+            },confirmButton={TextButton(onClick={musicDetail=null}){Text("닫기")}},dismissButton={
+                TextButton(enabled=musicJob==null&&!resetBusy,onClick={
+                    musicDetail=null;musicReview=t;musicCandidates=emptyList();musicProgress=""
+                    musicJob=scope.launch(start=CoroutineStart.LAZY){
+                        try{val result=MusicInfoRepository.search(this@MainActivity,t);musicCandidates=result.matches;musicProgress=if(result.errors.isEmpty())"후보 "+result.matches.size+"개" else "일부 제공처 오류 · 후보 "+result.matches.size+"개"}
+                        catch(e:CancellationException){throw e}catch(e:Exception){musicProgress="음악 정보 검색 실패"}
+                        finally{musicJob=null}
+                    }.also{it.start()}
+                }){Text(if(info==null)"정보 검색" else "다시 검색 / 수정")}
+            })
+        }
         musicReview?.let{t->
             AlertDialog(onDismissRequest={if(musicJob==null)musicReview=null},title={Text("음악 정보 확인")},text={
                 Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
                     Text("원본: "+t.title+" / "+t.artist)
                     if(musicJob!=null)LinearProgressIndicator(Modifier.fillMaxWidth())
                     if(musicJob==null&&musicCandidates.isEmpty())Text("일치하는 음악 정보 후보가 없습니다.")
+                    if(musicJob==null&&musicProgress.isNotBlank())Text(musicProgress,fontSize=12.sp,color=neutralColor)
                     musicCandidates.forEach{candidate->
                         Text(candidate.candidate.title+" · "+candidate.score+"점")
                         Text(candidate.candidate.artist+" / "+candidate.candidate.album,fontSize=13.sp)
