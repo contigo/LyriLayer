@@ -17,8 +17,8 @@ android {
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_shared" } }
-        versionCode = 36
-        versionName = "0.1.35"
+        versionCode = 37
+        versionName = "0.1.36"
     }
     buildTypes {
         getByName("debug") {
@@ -36,7 +36,6 @@ android {
 }
 dependencies {
     implementation(project(":lyrickit"))
-    implementation(project(":musickit"))
     implementation(project(":recognitionkit"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation(platform("androidx.compose:compose-bom:2025.10.00"))

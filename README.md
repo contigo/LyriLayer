@@ -135,3 +135,8 @@ Apache License 2.0 (LICENSE).
 ## v0.1.35 — RecognitionKit
 - 독립 Android Library :recognitionkit (ARM64 Rust/JNI SongRec), 12초 부분 디코딩/지문 검색, 기존 MusicInfo DB 및 가사 수집 연결, 선택/일괄 검색 및 중단. 원본 및 수동 확인 정보 보호. 비공식 Shazam 실험적 동의 필요; 실제 서비스 허용 및 실기기 검증 미완료. 모든 HTTP 오류에서 중단.
 - 기존 Apache-2.0 소스 유지, RecognitionKit GPL-3.0-or-later, 결합 바이너리 GPLv3 조건. [원본 및 변경 고지](recognitionkit/NOTICE.md), [GPL](recognitionkit/LICENSE-GPL-3.0.md). 대응 소스와 빌드 스크립트 포함, AAR 및 단위 테스트.
+
+## v0.1.36 — 음원·가사 통합 검색
+- 기존 MusicKit 앱 검색/후보/설정 및 앱 의존성 제거. :musickit 모듈, CI/독립 AAR, 저장 정보/가사 DB 유지.
+- 한 곡씩 음원 식별 → 가사 검색 및 저장 → 다음 곡. 식별된 곡의 미수집 가사 재검색, 미일치 시 기존 정보로 가사 검색. 기존 편집 가사와 저장 가사 보호, 서버 오류 시 중단. 독립 가사 수집과 동시 실행 제한.
+- Material 3 카드, 로컬 벡터 아이콘, 선택 및 필터, 설정/안내/곡 상세 팝업, 단계별 진행 표시. 단위 테스트 추가.

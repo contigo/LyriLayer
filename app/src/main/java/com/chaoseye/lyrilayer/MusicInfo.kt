@@ -2,7 +2,6 @@ package com.chaoseye.lyrilayer
 
 import android.content.Context
 import androidx.room.*
-import com.chaoseye.musickit.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -24,17 +23,7 @@ internal abstract class MusicInfoDb:RoomDatabase(){
     }
 }
 internal object MusicInfoRepository {
-    private val engine by lazy{createMusicKit()}
     private val gate=Mutex()
-    suspend fun search(c:Context,t:Track):MusicSearch=gate.withLock{
-        require(!t.excluded&&!MusicRules.excluded("",t.fileName,t.title))
-        val result=engine.identify(MusicQuery(t.title,t.artist,t.album,t.duration,t.fileName))
-        val dao=MusicInfoDb.get(c).dao()
-        if(dao.get(t.key)?.userConfirmed!=true)result.verified?.let{dao.put(info(t,it,false))}
-        result
-    }
-    private fun info(t:Track,m:MusicMatch,manual:Boolean)=m.candidate.let{MusicInfo(t.key,it.title,it.artist,it.album,it.durationMs,it.source.name,it.id,m.score,it.artworkUrl,it.releaseDate,manual)}
-    suspend fun select(c:Context,t:Track,m:MusicMatch)=gate.withLock{MusicInfoDb.get(c).dao().put(info(t,m,true))}
     suspend fun canonical(c:Context,t:Track):Track=MusicInfoDb.get(c).dao().get(t.key)?.let{t.copy(title=it.title,artist=it.artist,album=it.album.ifBlank{t.album},fileName="")}?:t
     suspend fun acceptFingerprint(c:Context,t:Track,match:com.chaoseye.recognitionkit.RecognizedTrack):Boolean=gate.withLock{
         val dao=MusicInfoDb.get(c).dao()
