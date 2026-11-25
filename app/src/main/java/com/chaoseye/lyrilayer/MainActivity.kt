@@ -76,6 +76,13 @@ class MainActivity : ComponentActivity() {
         val db=remember { LyricsDb.get(this) }
         val stored by remember { db.dao().observe() }.collectAsStateWithLifecycle(initialValue=emptyList())
         val map=remember(stored) { stored.associateBy { it.key } }
+        val musicDao=remember{MusicInfoDb.get(this@MainActivity).dao()}
+        val musicRows by remember{musicDao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
+        val musicMap=remember(musicRows){musicRows.associateBy{it.key}}
+        var musicJob by remember{mutableStateOf<Job?>(null)}
+        var musicProgress by remember{mutableStateOf("")}
+        var musicReview by remember{mutableStateOf<Track?>(null)}
+        var musicCandidates by remember{mutableStateOf(emptyList<com.chaoseye.musickit.MusicMatch>())}
         var tracks by remember { mutableStateOf(emptyList<Track>()) }
         var message by remember { mutableStateOf("") }
         var messageStatus by remember { mutableStateOf("IDLE") }
@@ -157,7 +164,7 @@ class MainActivity : ComponentActivity() {
         var hiddenBatchIds by remember { mutableStateOf(getSharedPreferences("batch_progress",MODE_PRIVATE).getStringSet("reset_hidden_ids",emptySet())?.toSet().orEmpty()) }
         val visibleJobs=jobs.filter { it.id.toString() !in hiddenBatchIds }
         val job=visibleJobs.firstOrNull { !it.state.isFinished } ?: visibleJobs.firstOrNull()
-        val resetAllowed=!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
+        val resetAllowed=musicJob==null&&!resetBusy&&!aiRunning&&!aiSaving&&!queuedLive.running&&activeAnalysis==null&&jobs.none{!it.state.isFinished}&&!now.playing&&messageStatus!="RUNNING"
         BackHandler(enabled=resetBusy) { }
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
@@ -281,6 +288,24 @@ class MainActivity : ComponentActivity() {
                             append(" · ")
                             withStyle(SpanStyle(color=neutralColor)){append("미등록 ${tracks.size-found}")}
                         },fontSize=18.sp)
+                        Text("음악 정보 확인 "+tracks.count{musicMap.containsKey(it.key)}+" / "+tracks.size+"곡",color=successColor)
+                        Button(enabled=allowed&&musicJob==null,onClick={
+                            musicJob=scope.launch(start=CoroutineStart.LAZY){
+                                try{
+                                    val pending=tracks.filter{!musicMap.containsKey(it.key)}
+                                    var foundInfo=0;var failures=0
+                                    for((index,t) in pending.withIndex()){
+                                        musicProgress="음악 정보 수집 "+(index+1)+"/"+pending.size+" · "+t.title
+                                        try{val r=MusicInfoRepository.search(this@MainActivity,t);if(r.verified!=null)foundInfo++;if(r.errors.isNotEmpty())failures++}
+                                        catch(e:CancellationException){throw e}catch(e:Exception){failures++}
+                                    }
+                                    musicProgress="음악 정보 수집 완료 · 확인 "+foundInfo+"곡 · 제공처 오류 "+failures+"곡"
+                                }catch(e:CancellationException){musicProgress="음악 정보 수집 중단";throw e}
+                                finally{musicJob=null}
+                            }.also{it.start()}
+                        },modifier=Modifier.fillMaxWidth()){Text("음악 정보 일괄 수집")}
+                        if(musicJob!=null)TextButton(onClick={musicJob?.cancel()}){Text("음악 정보 수집 중단")}
+                        if(musicProgress.isNotBlank())Text(musicProgress,fontSize=13.sp)
                         Text("통화·음성 녹음 및 벨소리 제외",style=MaterialTheme.typography.bodySmall,fontSize=14.sp)
                         if(!allowed) Button(onClick={startAccessPass()}) { Text("음악 파일 접근 허용") }
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -333,7 +358,7 @@ class MainActivity : ComponentActivity() {
                         Text(message,color=if(messageStatus=="AI")aiColor else resultColor(messageStatus))
                         val visibleTracks=tracks.filter{t->
                             val l=map[t.key]
-                            (t.title.contains(query,true)||t.artist.contains(query,true))&&LyricDisplay.visible(lyricFilter,l?.status,l?.source,aiTarget?.key==t.key)
+                            (t.title.contains(query,true)||t.artist.contains(query,true)||musicMap[t.key]?.title?.contains(query,true)==true||musicMap[t.key]?.artist?.contains(query,true)==true||musicMap[t.key]?.album?.contains(query,true)==true)&&LyricDisplay.visible(lyricFilter,l?.status,l?.source,aiTarget?.key==t.key)
                         }
                         if(visibleTracks.isEmpty()&&allowed)Text("해당 조건의 곡이 없습니다.",color=neutralColor,fontSize=14.sp)
                         LazyColumn(Modifier.weight(1f)) { items(visibleTracks) { t ->
@@ -347,9 +372,19 @@ class MainActivity : ComponentActivity() {
                                 else -> LyricDisplay.label(l?.status,l?.source,!l?.synced.isNullOrBlank())
                             }
                             val rowColor=when{activeAi&&aiFailed->failureColor;activeAi||generated->aiColor;else->resultColor(l?.status.orEmpty())}
-                            ListItem(headlineContent={Text(t.title)},supportingContent={
+                            ListItem(headlineContent={Text(musicMap[t.key]?.title?:t.title)},supportingContent={
                                 Column(verticalArrangement=Arrangement.spacedBy(3.dp)){
-                                    Text(buildAnnotatedString{append(t.artist);append(" · ");withStyle(SpanStyle(color=rowColor)){append(rowLabel)}})
+                                    Text(buildAnnotatedString{append(musicMap[t.key]?.artist?:t.artist);append(" · ");withStyle(SpanStyle(color=rowColor)){append(rowLabel)}})
+                                    val info=musicMap[t.key]
+                                    Text(if(info==null)"음악 정보 미확인" else info.album+" · 정보 확인 "+info.score+"점",fontSize=12.sp,color=if(info==null)neutralColor else successColor)
+                                    TextButton(enabled=musicJob==null,onClick={
+                                        musicReview=t;musicCandidates=emptyList()
+                                        musicJob=scope.launch(start=CoroutineStart.LAZY){
+                                            try{val result=MusicInfoRepository.search(this@MainActivity,t);musicCandidates=result.matches;musicProgress=if(result.errors.isEmpty())"후보 "+result.matches.size+"개" else "일부 제공처 오류 · 후보 "+result.matches.size+"개"}
+                                            catch(e:CancellationException){throw e}catch(e:Exception){musicProgress="음악 정보 검색 실패"}
+                                            finally{musicJob=null}
+                                        }.also{it.start()}
+                                    },contentPadding=PaddingValues(0.dp)){Text("음악 정보 확인 / 수정",fontSize=13.sp)}
                                     if(l?.status=="FOUND"&&(!l.plain.isBlank()||l.synced.isNotBlank()))TextButton(onClick={syncTrack=t},contentPadding=PaddingValues(0.dp)){Text("가사 관리 / 싱크",fontSize=13.sp)}
                                     if(activeAi&&aiRunning)LinearProgressIndicator(progress={aiProgress/100f},modifier=Modifier.fillMaxWidth(),color=aiColor)
                                     if(!LyricDisplay.registered(l?.status)||activeAi)TextButton(onClick={openAi(t)},contentPadding=PaddingValues(0.dp)){Text(if(activeAi)"AI 분석 열기" else "✦ AI 가사 분석",color=aiColor,fontSize=13.sp)}
@@ -507,6 +542,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        musicReview?.let{t->
+            AlertDialog(onDismissRequest={if(musicJob==null)musicReview=null},title={Text("음악 정보 확인")},text={
+                Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    Text("원본: "+t.title+" / "+t.artist)
+                    if(musicJob!=null)LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if(musicJob==null&&musicCandidates.isEmpty())Text("일치하는 음악 정보 후보가 없습니다.")
+                    musicCandidates.forEach{candidate->
+                        Text(candidate.candidate.title+" · "+candidate.score+"점")
+                        Text(candidate.candidate.artist+" / "+candidate.candidate.album,fontSize=13.sp)
+                        TextButton(enabled=musicJob==null,onClick={
+                            musicJob=scope.launch(start=CoroutineStart.LAZY){
+                                try{MusicInfoRepository.select(this@MainActivity,t,candidate);musicReview=null}
+                                finally{musicJob=null}
+                            }.also{it.start()}
+                        }){Text("이 음악으로 확인")}
+                        HorizontalDivider()
+                    }
+                }
+            },confirmButton={TextButton(enabled=musicJob==null,onClick={musicReview=null}){Text("닫기")}})
+        }
         if(searchLogOpen) {
             val history=remember(searchLogOpen,jobs){getSharedPreferences("batch_progress",MODE_PRIVATE).getString("errorLog","").orEmpty()}
             AlertDialog(onDismissRequest={searchLogOpen=false},title={Text("가사 수집 오류 기록")},text={
@@ -519,7 +574,7 @@ class MainActivity : ComponentActivity() {
             onDismissRequest={if(!resetBusy)resetConfirm=false},
             title={Text(if(resetBusy)"DB 초기화 중" else "DB를 초기화하시겠습니까?")},
             text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
-                Text("저장된 일반/싱크 가사와 직접 편집한 가사, AI 생성 가사, 분석 대기열 및 수집 기록이 삭제됩니다. 복구할 수 없습니다.")
+                Text("저장된 음악 정보와 일반/싱크 가사, 직접 편집한 가사, AI 생성 가사, 분석 대기열 및 수집 기록이 삭제됩니다. 복구할 수 없습니다.")
                 Text("음악 파일, 외부 LRC, 다운로드한 AI 모델과 앱 설정은 삭제하지 않습니다.")
                 Text("초기화 후 음악을 재생하거나 검색하면 가사가 다시 등록될 수 있습니다.",fontSize=12.sp)
                 if(resetBusy)LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
@@ -534,6 +589,7 @@ class MainActivity : ComponentActivity() {
                         withContext(NonCancellable){
                             val queueCount=AiQueue.clearForReset(this@MainActivity)
                             val lyricCount=Repository.clearForReset(this@MainActivity)
+                            val musicCount=MusicInfoRepository.clear(this@MainActivity)
                             val ids=activeJobs.map{it.id.toString()}.toSet()
                             withContext(Dispatchers.IO){
                                 check(getSharedPreferences("batch_progress",MODE_PRIVATE).edit().clear().putStringSet("reset_hidden_ids",ids).commit()){"수집 기록 초기화 실패"}
@@ -541,7 +597,7 @@ class MainActivity : ComponentActivity() {
                             hiddenBatchIds=ids
                             clearAi();edit=null;syncTrack=null;manualSearch=null
                             message="";messageStatus="IDLE"
-                            resetStatus="초기화 완료 · 가사 "+lyricCount+"개, AI 목록 "+queueCount+"개 삭제"
+                            resetStatus="초기화 완료 · 가사 "+lyricCount+"개, AI 목록 "+queueCount+"개, 음악 정보 "+musicCount+"개 삭제"
                         }
                     }catch(e:CancellationException){throw e}
                     catch(e:Exception){resetStatus="초기화 오류 (일부 삭제되었을 수 있음): "+e.message}

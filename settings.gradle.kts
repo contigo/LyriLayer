@@ -4,3 +4,5 @@ rootProject.name = "LyriLayer"
 include(":app")
 
 include(":lyrickit")
+
+include(":musickit")

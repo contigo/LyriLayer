@@ -6,7 +6,8 @@ import com.chaoseye.lyrickit.createLyricKit
 
 internal object LyricKitBridge {
     private val engine by lazy { createLyricKit() }
-    suspend fun lookup(track: Track): SearchOutcome {
+    suspend fun lookup(context: android.content.Context, original: Track): SearchOutcome {
+        val track=MusicInfoRepository.canonical(context,original)
         if (track.excluded || MusicRules.excluded("", track.fileName, track.title)) return SearchOutcome.NotFound
         val identity = MusicRules.identities(track.title, track.artist, track.fileName)
             .firstOrNull { it.title.isNotBlank() } ?: return SearchOutcome.NotFound

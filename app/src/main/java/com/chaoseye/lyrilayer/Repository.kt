@@ -90,8 +90,8 @@ object Repository {
         error?.let{throw it}
         return null
     }
-    private suspend fun online(t:Track):Lyric? {
-        val primary = LyricKitBridge.lookup(t)
+    private suspend fun online(c:Context,t:Track):Lyric? {
+        val primary = LyricKitBridge.lookup(c,t)
         val candidate = LyricKitBridge.toLyric(t, primary)
         if (candidate?.synced?.isNotBlank() == true) return candidate
         val failures = when(primary) {
@@ -100,7 +100,7 @@ object Repository {
             else -> emptyMap()
         }
         val details = failures.map { (provider,failure) -> com.chaoseye.lyrickit.SearchFailures.label(provider)+": "+com.chaoseye.lyrickit.SearchFailures.describe(failure) }
-        val legacy = try { legacyOnline(t) } catch(e: CancellationException) { throw e } catch(e: Exception) {
+        val legacy = try { legacyOnline(MusicInfoRepository.canonical(c,t))?.copy(key=t.key) } catch(e: CancellationException) { throw e } catch(e: Exception) {
             if (candidate != null) return candidate
             val status=Regex("HTTP ([0-9]{3})").find(e.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
             val failure=com.chaoseye.lyrickit.SearchFailures.classify(if(status!=null)com.chaoseye.lyrickit.HttpFailure(status) else e)
@@ -139,7 +139,7 @@ object Repository {
             if(t.excluded||MusicRules.excluded("",t.fileName,t.title))throw IOException("녹음 파일은 검색하지 않습니다")
             val dao=LyricsDb.get(c).dao();val old=dao.get(t.key)
             if(old!=null&&(old.edited||(!force&&(old.status=="FOUND"||old.status=="INSTRUMENTAL"||(old.status=="NOT_FOUND"&&old.source==MISS&&System.currentTimeMillis()-old.fetched<86400000)))))return@withContext old
-            val result=try{LocalLyrics.find(c,t)?:online(t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)}catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
+            val result=try{LocalLyrics.find(c,t)?:online(c,t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)}catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
             ensureActive()
             if(old?.status=="FOUND"&&(result.status!="FOUND"||(old.synced.isNotBlank()&&result.synced.isBlank())))return@withContext old
             if(dao.insert(result)==-1L)dao.updateAuto(result.key,result.plain,result.synced,result.source,result.status,result.fetched)

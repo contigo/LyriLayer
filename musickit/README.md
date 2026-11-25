@@ -1,0 +1,2 @@
+# MusicKit
+Independent Android library for metadata identification. No UI, persistence, API key or backend. Initial providers: iTunes KR and MusicBrainz; internet required for lookup. Conservative matching; ambiguous album editions require manual review. No audio upload. App stores verified metadata using original track identity. Domestic providers and fingerprint identification are future work, pending access/terms validation.

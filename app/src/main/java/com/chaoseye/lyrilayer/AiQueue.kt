@@ -72,7 +72,7 @@ internal object AiQueue {
                         if (OnlineLyricsSettings.enabled(c)) {
                             _live.update { it.copy(stage="온라인 가사 검색") }
                             val online = try {
-                                LyricKitBridge.toLyric(t, LyricKitBridge.lookup(t))
+                                LyricKitBridge.toLyric(t, LyricKitBridge.lookup(c,t))
                             } catch(e: CancellationException) { throw e } catch(e: Exception) { null }
                             currentCoroutineContext().ensureActive()
                             if (online != null) {
