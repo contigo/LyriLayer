@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
 
 @Composable
-internal fun SyncManager(context:Context,track:Track,lyric:Lyric,now:NowPlaying,modelReady:Boolean,onSaved:()->Unit,onClose:()->Unit){
+internal fun SyncManager(context:Context,track:Track,lyric:Lyric,now:NowPlaying,modelReady:Boolean,onSaved:()->Unit,onClose:()->Unit,onManualEdit:()->Unit){
     val scope=rememberCoroutineScope()
     val original=remember{lyric.plain.ifBlank{Lrc.parse(lyric.synced).joinToString("\n"){it.text}}}
     val rows=remember(original){PlainSync.rows(original)}
@@ -48,12 +48,6 @@ internal fun SyncManager(context:Context,track:Track,lyric:Lyric,now:NowPlaying,
     val next=times.indexOfFirst{it.isBlank()}
     fun load(lines:List<Line>,kind:String){
         times=lines.map{LyricDisplay.timestamp(it.ms)};source=kind;uncertain=emptySet();mode="edit"
-    }
-    fun startManual(){
-        val existing=Lrc.parse(lyric.synced)
-        if(existing.size==rows.size&&existing.map{it.text}==rows)load(existing.map{it.copy(ms=(it.ms+lyric.offset).coerceAtLeast(0))},PlainSync.MANUAL_SOURCE)
-        else{times=List(rows.size){""};source=PlainSync.MANUAL_SOURCE;uncertain=emptySet();mode="edit"}
-        status="삼성 뮤직에서 이 곡을 재생하고 가사가 시작될 때 시간을 기록하세요. 직접 입력도 가능합니다."
     }
     fun startAi(){
         running=true;progress=0;preview=emptyList();status="AI 분석 준비";mode="ai"
@@ -94,7 +88,7 @@ internal fun SyncManager(context:Context,track:Track,lyric:Lyric,now:NowPlaying,
                         load(PlainSync.estimated(original,track.duration),PlainSync.ESTIMATE_SOURCE)
                         uncertain=rows.indices.toSet();status="재생 시간 균등 분배 · 실제 싱크가 아닙니다. 검토 후 저장하세요."
                     },modifier=Modifier.fillMaxWidth()){Text("추정 자동 스크롤 / LRC 생성")}
-                    OutlinedButton(enabled=rows.isNotEmpty(),onClick={startManual()},modifier=Modifier.fillMaxWidth()){Text("수동 싱크 편집")}
+                    OutlinedButton(enabled=rows.isNotEmpty(),onClick=onManualEdit,modifier=Modifier.fillMaxWidth()){Text("수동 싱크 편집")}
                     Row(verticalAlignment=Alignment.CenterVertically){
                         Text("AI 언어",Modifier.weight(1f))
                         listOf("auto" to "자동","ko" to "한","en" to "영","ja" to "일").forEach{(key,label)->

@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
@@ -120,6 +121,13 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled=page==2&&settingsScreen!="main"){settingsScreen="main"}
         var edit by remember { mutableStateOf<Track?>(null) }
         var syncTrack by remember { mutableStateOf<Track?>(null) }
+        var syncEditorKey by rememberSaveable { mutableStateOf<String?>(null) }
+        val syncEditorState=rememberSaveableStateHolder()
+        fun openSyncEditor(t:Track){
+            syncEditorKey=t.key;syncTrack=null;musicDetail=null
+            page=1;queueScreen=false;searchScreen=false;fingerprintScreen=false;query=""
+        }
+        fun closeSyncEditor(){syncEditorKey?.let{syncEditorState.removeState(it)};syncEditorKey=null}
         var manualSearch by remember { mutableStateOf<Track?>(null) }
         var aiTrack by remember { mutableStateOf<Track?>(null) }
         var aiTarget by remember { mutableStateOf<Track?>(null) }
@@ -234,7 +242,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
-        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&(queueScreen||searchScreen||fingerprintScreen))) NavigationBar { listOf("라이브러리","실시간 가사","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false;searchScreen=false;fingerprintScreen=false;query=""},icon={Text(listOf("♫","≋","⚙")[i])},label={Text(s)}) } } }) { padding ->
+        Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&(queueScreen||searchScreen||fingerprintScreen))) NavigationBar { listOf("라이브러리","싱크 편집","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false;searchScreen=false;fingerprintScreen=false;query=""},icon={if(i==1)RecognitionGlyph("clock") else Text(if(i==0)"♫" else "⚙")},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=12.dp,vertical=8.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(if(page==0)6.dp else 10.dp)) {
                 if(page==0&&fingerprintScreen){
                     MusicRecognitionScreen(this@MainActivity,tracks,musicMap,map,allowed&&!resetBusy&&!lyricRunning&&!lyricStarting&&!lyricStopping,onBack={fingerprintScreen=false})
@@ -301,7 +309,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                }else if(page==1)Text("실시간 가사",style=MaterialTheme.typography.titleLarge)
+                }else if(page==1&&syncEditorKey==null)Text("싱크 편집",style=MaterialTheme.typography.titleLarge)
                 when(page) {
                     0 -> {
                         if(!searchScreen){
@@ -433,7 +441,8 @@ class MainActivity : ComponentActivity() {
                                         DropdownMenuItem(text={Text("가사 검색")},onClick={rowMenu=false;scope.launch { messageStatus="RUNNING"; message="검색 중: ${t.title}"; try { val result=Repository.resolve(this@MainActivity,t,true); messageStatus=result.status; message="${t.title}: ${when { result.status=="INSTRUMENTAL" -> "연주곡"; result.synced.isNotBlank() -> "싱크 가사 저장 완료"; result.status=="FOUND" -> "일반 가사 저장 완료"; else -> "가사 없음 · 직접 검색 또는 AI 분석 가능" }}" } catch(e: CancellationException){throw e} catch(e: Exception){messageStatus="ERROR";message="검색 오류: ${e.message}"} }})
                                         DropdownMenuItem(text={Text("가사 직접 검색")},onClick={rowMenu=false;manualSearch=t})
                                         DropdownMenuItem(text={Text("가사 편집")},onClick={rowMenu=false;edit=t})
-                                        if(l?.status=="FOUND"&&(!l.plain.isBlank()||l.synced.isNotBlank()))DropdownMenuItem(text={Text("가사 관리 / 싱크")},onClick={rowMenu=false;syncTrack=t})
+                                        if(ManualSyncRules.eligible(t,l))DropdownMenuItem(text={Text("싱크 편집")},leadingIcon={RecognitionGlyph("clock")},onClick={rowMenu=false;openSyncEditor(t)})
+                                        if(l?.status=="FOUND"&&(!l.plain.isBlank()||l.synced.isNotBlank()))DropdownMenuItem(text={Text("가사 관리 / AI 싱크")},onClick={rowMenu=false;syncTrack=t})
                                         if(!LyricDisplay.registered(l?.status)||activeAi)DropdownMenuItem(text={Text(if(activeAi)"AI 분석 열기" else "AI 가사 분석")},onClick={rowMenu=false;openAi(t)})
                                     }
                                 }
@@ -442,30 +451,18 @@ class MainActivity : ComponentActivity() {
                         } }
                     }
                     1 -> {
-                        Text(now.track?.title ?: "재생 중인 음악 없음",style=MaterialTheme.typography.titleLarge)
-                        Text(now.track?.artist.orEmpty())
-                        if(LyricDisplay.aiGenerated(now.lyric?.status,now.lyric?.source))Text("✦ AI 생성 가사",color=aiColor,fontSize=14.sp)
-                        Text(if(now.playing) "Samsung Music 재생 중" else "재생 대기 / 일시 정지")
-                        Text(if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"음악 감지 서비스 연결 대기" else now.overlayStatus, fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
-                        TextButton(onClick={if(listenerAllowed)NotificationListenerService.requestRebind(listenerComponent);Playback.retry.value++}){Text("삼성 뮤직 다시 연결 / 가사 확인")}
-                        val lines=remember(now.lyric?.synced) { Lrc.parse(now.lyric?.synced.orEmpty()) }
-                        if(lines.isNotEmpty()) {
-                            val list=rememberLazyListState()
-                            LaunchedEffect(now.index,lines) { if(now.index>=0) list.animateScrollToItem((now.index-2).coerceAtLeast(0)) }
-                            LazyColumn(state=list,modifier=Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(18.dp)) { items(lines.size) { i -> Text(lines[i].text,style=if(i==now.index) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge,color=if(i==now.index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
-                        } else if(!now.lyric?.plain.isNullOrBlank()){
-                            val plain=now.lyric?.plain.orEmpty()
-                            val rows=remember(plain){PlainSync.rows(plain)}
-                            val estimates=remember(plain,now.track?.duration){PlainSync.estimated(plain,now.track?.duration?:0)}
-                            val idx=Lrc.index(estimates,now.position)
-                            val list=rememberLazyListState()
-                            LaunchedEffect(idx,plainMode){if(plainMode==PlainSync.ESTIMATE&&idx>=0)list.animateScrollToItem((idx-1).coerceAtLeast(0))}
-                            Text(if(plainMode==PlainSync.ESTIMATE)"일반 가사 · 추정 싱크" else "일반 가사 · 시간 정보 없음")
-                            LazyColumn(state=list,modifier=Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(12.dp)){
-                                items(rows.size){i->Text(rows[i],color=if(plainMode==PlainSync.ESTIMATE&&i==idx)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)}
-                            }
-                        } else Text(now.message)
-                    }
+                         val editorKey=syncEditorKey
+                         val selectedTrack=tracks.firstOrNull{it.key==editorKey}
+                         val selectedLyric=selectedTrack?.let{map[it.key]}
+                         if(editorKey!=null&&selectedTrack!=null&&selectedLyric!=null&&ManualSyncRules.eligible(selectedTrack,selectedLyric)){
+                             syncEditorState.SaveableStateProvider(editorKey){
+                                 ManualSyncEditor(this@MainActivity,selectedTrack,selectedLyric,musicMap[editorKey],onSaved={closeSyncEditor();message="싱크 가사 저장 완료";messageStatus="FOUND"},onClose={closeSyncEditor()})
+                             }
+                         }else if(editorKey!=null){
+                             Text("선택한 음원 또는 가사 불러오는 중",fontSize=14.sp)
+                             TextButton(onClick={closeSyncEditor()}){Text("편집 목록으로")}
+                         }else ManualSyncList(tracks,map,musicMap,onSelect={openSyncEditor(it)})
+                     }
                     else -> {
                         if(settingsScreen=="main"){
                             Text("설정",style=MaterialTheme.typography.titleLarge)
@@ -635,7 +632,9 @@ class MainActivity : ComponentActivity() {
                         Text(listOf(t.title,t.artist,t.album,durationText(t.duration)).filter{it.isNotBlank()}.joinToString(" · "),fontSize=12.sp,color=neutralColor)
                     }else Text("아직 저장된 검색 정보가 없습니다. 라이브러리의 통합 검색에서 확인할 수 있습니다.",fontSize=12.sp,color=neutralColor)
                 }
-            },confirmButton={TextButton(onClick={musicDetail=null}){Text("닫기")}})
+            },confirmButton={TextButton(onClick={musicDetail=null}){Text("닫기")}},dismissButton={
+                if(ManualSyncRules.eligible(t,lyric))TextButton(onClick={openSyncEditor(t)}){RecognitionGlyph("clock",Modifier.size(16.dp));Spacer(Modifier.width(4.dp));Text("싱크 편집")}
+            })
         }
         if(searchLogOpen) {
             val history=remember(searchLogOpen,jobs){getSharedPreferences("batch_progress",MODE_PRIVATE).getString("errorLog","").orEmpty()}
@@ -672,6 +671,7 @@ class MainActivity : ComponentActivity() {
                                 check(getSharedPreferences("batch_progress",MODE_PRIVATE).edit().clear().putStringSet("reset_hidden_ids",ids).commit()){"수집 기록 초기화 실패"}
                             }
                             hiddenBatchIds=ids
+                            tracks.forEach{syncEditorState.removeState(it.key)};closeSyncEditor()
                             clearAi();edit=null;syncTrack=null;manualSearch=null
                             message="";messageStatus="IDLE"
                             resetStatus="초기화 완료 · 가사 "+lyricCount+"개, AI 목록 "+queueCount+"개, 음악 정보 "+musicCount+"개 삭제"
@@ -807,7 +807,7 @@ class MainActivity : ComponentActivity() {
         }
         syncTrack?.let{t->
             val lyric=map[t.key]
-            if(lyric!=null)SyncManager(this@MainActivity,t,lyric,now,modelReady,onSaved={syncTrack=null;message="싱크 가사 저장 완료";messageStatus="FOUND"},onClose={syncTrack=null})
+            if(lyric!=null)SyncManager(this@MainActivity,t,lyric,now,modelReady,onSaved={syncTrack=null;message="싱크 가사 저장 완료";messageStatus="FOUND"},onClose={syncTrack=null},onManualEdit={openSyncEditor(t)})
         }
         edit?.let { t ->
             val old=map[t.key]
