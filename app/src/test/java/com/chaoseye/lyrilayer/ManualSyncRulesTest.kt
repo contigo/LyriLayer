@@ -21,6 +21,24 @@ class ManualSyncRulesTest {
         assertFalse(ManualSyncRules.valid(b,180000))
         assertEquals(1,ManualSyncRules.nextIndex(b,2))
     }
+    @Test fun adjustOneLineByExactly100ms(){
+        val times=listOf(1000L,2200L,3500L)
+        assertEquals(listOf(1000L,2100L,3500L),ManualSyncRules.adjust(times,1,-100L,5000L))
+        assertEquals(listOf(1000L,2300L,3500L),ManualSyncRules.adjust(times,1,100L,5000L))
+        assertEquals(listOf(1000L,2200L,3500L),times)
+        assertEquals(listOf(1000L,2400L,3500L),ManualSyncRules.adjust(ManualSyncRules.adjust(times,1,100L,5000L)!!,1,100L,5000L))
+    }
+    @Test fun adjustmentRejectsInvalidBoundaries(){
+        assertNull(ManualSyncRules.adjust(listOf(1000L,1100L),1,-100L,5000L))
+        assertNull(ManualSyncRules.adjust(listOf(1000L,-1L,1100L),0,100L,5000L))
+        assertNull(ManualSyncRules.adjust(listOf(-1L),0,100L,5000L))
+        assertNull(ManualSyncRules.adjust(listOf(50L),0,-100L,5000L))
+        assertNull(ManualSyncRules.adjust(listOf(4900L),0,100L,5000L))
+        assertNull(ManualSyncRules.adjust(listOf(1000L),1,100L,5000L))
+        assertNull(ManualSyncRules.adjust(listOf(1000L),0,200L,5000L))
+        assertTrue(ManualSyncRules.canAdjust(listOf(100L),0,-100L,5000L))
+        assertEquals(listOf(0L),ManualSyncRules.adjust(listOf(100L),0,-100L,5000L))
+    }
     @Test fun existingTimes(){
         val l=Lyric(track.key,plain="a\nb",synced="[00:01.00]a\n[00:02.00]b",offset=200)
         assertEquals(listOf(1200L,2200L),ManualSyncRules.initial(l,180000))

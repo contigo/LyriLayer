@@ -53,6 +53,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
     var retry by remember{mutableStateOf(prefs.getBoolean("fingerprint_retry",true))}
     var consent by rememberSaveable{mutableStateOf(false)}
     var filter by rememberSaveable{mutableStateOf("all")}
+    // Normalize a restored selection from the removed progress filter.
+    LaunchedEffect(filter){if(filter=="running")filter="all"}
     var selection by remember{mutableStateOf(emptySet<String>())}
     var settingsOpen by rememberSaveable{mutableStateOf(false)}
     var infoOpen by rememberSaveable{mutableStateOf(false)}
@@ -100,8 +102,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
         Card(Modifier.fillMaxWidth(),shape=RoundedCornerShape(14.dp),colors=CardDefaults.cardColors(containerColor=colors.surfaceContainer)){
             Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
                 Row(verticalAlignment=Alignment.CenterVertically){
-                    Text("전체 진행",Modifier.weight(1f),fontSize=12.sp,color=colors.onSurfaceVariant)
-                    Text(live.done.toString()+"/"+live.total+"곡",fontSize=12.sp);Spacer(Modifier.width(8.dp));Text("$percent%",style=MaterialTheme.typography.titleMedium,color=colors.primary)
+                    Text(live.done.toString()+"/"+live.total+"곡",Modifier.weight(1f),fontSize=12.sp,color=colors.onSurfaceVariant)
+                    Text("$percent%",style=MaterialTheme.typography.titleMedium,color=colors.primary)
                 }
                 LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth())
                 val currentKey=live.currentKey
@@ -119,7 +121,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
         }
     }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(5.dp)){
-        listOf("all" to "전체","pending" to "대기","running" to "진행","done" to "완료","partial" to "부분","failed" to "실패").forEach{(id,label)->
+        listOf("all" to "전체","pending" to "대기","done" to "완료","partial" to "부분","failed" to "실패").forEach{(id,label)->
             FilterChip(selected=filter==id,onClick={filter=id},label={Text(label+" "+(if(id=="all")eligible.size else counts[id]?:0),fontSize=12.sp)})
         }
     }

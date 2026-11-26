@@ -94,6 +94,12 @@ import kotlinx.coroutines.*
         if(advance)selected=ManualSyncRules.nextIndex(times,index)
         status=""
     }
+    fun adjustLine(index:Int,delta:Long){
+        if(saving)return
+        val updated=ManualSyncRules.adjust(times,index,delta,duration)?:return
+        change(updated,index,false)
+        // Keep the next recording target selected; only the tapped line changes.
+    }
     fun mark(){
         val pos=player.readPosition()?:return
         val updated=ManualSyncRules.mark(times,selected,pos,duration)
@@ -152,13 +158,18 @@ import kotlinx.coroutines.*
         items(rows.size){i->
             val chosen=i==selected;val timestamp=times.getOrElse(i){ManualSyncRules.UNSET}
             Surface(shape=RoundedCornerShape(10.dp),color=if(chosen)colors.primaryContainer else colors.surfaceContainerLow,contentColor=if(chosen)colors.onPrimaryContainer else colors.onSurface){
-                Row(Modifier.fillMaxWidth().clickable(enabled=!saving){selected=i;status=""}.padding(horizontal=10.dp,vertical=9.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    Column(Modifier.width(75.dp)){
-                        Text((i+1).toString(),fontSize=10.sp,color=colors.onSurfaceVariant)
-                        Text(if(timestamp>=0)LyricDisplay.timestamp(timestamp) else "--:--.--",fontSize=12.sp,color=if(chosen)colors.onPrimaryContainer else colors.primary)
+                Row(Modifier.fillMaxWidth().padding(horizontal=3.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(3.dp)){
+                    TextButton(enabled=!saving&&ManualSyncRules.canAdjust(times,i,-ManualSyncRules.ADJUST_STEP_MS,duration),onClick={adjustLine(i,-ManualSyncRules.ADJUST_STEP_MS)},modifier=Modifier.width(48.dp).heightIn(min=48.dp).semantics{contentDescription=(i+1).toString()+"번째 가사 0.1초 앞당기기"},contentPadding=PaddingValues(0.dp)){
+                        Text("−0.1",fontSize=12.sp,maxLines=1)
                     }
-                    Text(rows[i],Modifier.weight(1f),style=if(chosen)MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium)
-                    if(timestamp>=0)SyncIcon("play","이 가사 위치로 이동",player.ready&&!player.seeking&&!saving){selected=i;player.seek(timestamp)} else if(chosen)RecognitionGlyph("clock",color=colors.onPrimaryContainer)
+                    Column(Modifier.weight(1f).clickable(enabled=!saving){selected=i;status=""}.padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(3.dp)){
+                        Text((i+1).toString()+" · "+(if(timestamp>=0)LyricDisplay.timestamp(timestamp) else "--:--.--"),fontSize=12.sp,color=if(chosen)colors.onPrimaryContainer else colors.primary)
+                        Text(rows[i],style=if(chosen)MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium)
+                    }
+                    if(timestamp>=0)SyncIcon("play","이 가사 위치로 이동",player.ready&&!player.seeking&&!saving){selected=i;player.seek(timestamp)} else if(chosen)RecognitionGlyph("clock",Modifier.size(18.dp),colors.onPrimaryContainer)
+                    TextButton(enabled=!saving&&ManualSyncRules.canAdjust(times,i,ManualSyncRules.ADJUST_STEP_MS,duration),onClick={adjustLine(i,ManualSyncRules.ADJUST_STEP_MS)},modifier=Modifier.width(48.dp).heightIn(min=48.dp).semantics{contentDescription=(i+1).toString()+"번째 가사 0.1초 늦추기"},contentPadding=PaddingValues(0.dp)){
+                        Text("+0.1",fontSize=12.sp,maxLines=1)
+                    }
                 }
             }
         }
