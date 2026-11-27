@@ -2,6 +2,8 @@ package com.chaoseye.lyrilayer
 
 import android.content.ComponentName
 import android.content.Context
+import android.database.ContentObserver
+import android.provider.MediaStore
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -51,6 +53,12 @@ class MusicListener : NotificationListenerService() {
     private var overlayFailure = ""
     private var overlayFailureAt = 0L
     private var windowContext:Context?=null
+    private data class LayoutKey(val width:Int,val height:Int,val density:Float,val fontScale:Float,val position:Int,val alpha:Float)
+    private var displayedLayout:LayoutKey?=null
+    // Accessed on Main; the expensive scan and indexing run on IO.
+    private var audioIndex:Map<String,List<Track>>?=null
+    private var libraryGeneration=0L
+    private var libraryObserverActive=false
     private val wm get() = overlayContext().getSystemService(WindowManager::class.java)
     private fun overlayContext():Context {
         windowContext?.let{return it}
@@ -61,6 +69,21 @@ class MusicListener : NotificationListenerService() {
         }else this
         windowContext=c
         return c
+    }
+    private suspend fun matchingTrack(track:Track):Track? {
+        if(!FloatingPermissions.audioGranted(this)){
+            audioIndex=null
+            return null
+        }
+        val generation=libraryGeneration
+        val index=audioIndex?:withContext(Dispatchers.IO){
+            Library.allAudio(this@MusicListener).groupBy{MusicRules.norm(it.title)}
+        }.also{if(libraryObserverActive&&generation==libraryGeneration)audioIndex=it}
+        val matches=index[MusicRules.norm(track.title)].orEmpty().filter{
+            (MusicRules.clean(track.artist).isBlank()||MusicRules.artistMatches(it.artist,track.artist))&&
+                (track.duration<=0||kotlin.math.abs(it.duration-track.duration)<=3000)
+        }
+        return matches.firstOrNull{it.excluded}?:matches.distinctBy{it.key}.singleOrNull()
     }
     private fun clearTrack(){
         fetch?.cancel();fetch=null;activeKey=null;resolvedKey=null;excludedTrack=false;searching=false
@@ -104,6 +127,7 @@ class MusicListener : NotificationListenerService() {
         var receiverAdded=false
         var prefsAdded=false
         var opsAdded=false
+        var observerAdded=false
         val prefs=getSharedPreferences("settings",Context.MODE_PRIVATE)
         val ops=getSystemService(android.app.AppOpsManager::class.java)
         fun signal(){wake.trySend(Unit)}
@@ -121,7 +145,19 @@ class MusicListener : NotificationListenerService() {
         val listener=MediaSessionManager.OnActiveSessionsChangedListener {
             refreshRequested=true;signal()
         }
-        val settingsListener=android.content.SharedPreferences.OnSharedPreferenceChangeListener { _,_->signal() }
+        val settingsListener=android.content.SharedPreferences.OnSharedPreferenceChangeListener { _,key->
+            when(key){
+                OverlayTiming.AUTO_SEARCH_KEY->{force=true;signal()}
+                "overlay","overlay_test",OverlayContent.SHOW_MISSING,PlainSync.MODE_KEY,OverlayPosition.KEY,OverlayTransparency.KEY,null->signal()
+                else->Unit
+            }
+        }
+        val libraryObserver=object:ContentObserver(handler){
+            override fun onChange(selfChange:Boolean){
+                audioIndex=null;libraryGeneration++
+                if(activeKey!=null){force=true;signal()}
+            }
+        }
         val receiver=object:android.content.BroadcastReceiver(){
             override fun onReceive(context:Context?,intent:android.content.Intent?){signal()}
         }
@@ -131,11 +167,23 @@ class MusicListener : NotificationListenerService() {
                 if(value!=lastRetry){lastRetry=value;refreshRequested=true;force=true;signal()}
             }
         }
+        val analysisJob=launch{
+            var previousRelevant:AiAnalysisProgress?=null
+            DeviceLyrics.activeAnalysis.collect{value->
+                val relevant=value?.takeIf{it.trackKey==(resolvedKey?:activeKey)}
+                if(relevant!=previousRelevant){previousRelevant=relevant;signal()}
+            }
+        }
         try{
+            audioIndex=null;libraryGeneration++
+            observerAdded=runCatching{
+                contentResolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,true,libraryObserver)
+            }.isSuccess
+            libraryObserverActive=observerAdded
             manager.addOnActiveSessionsChangedListener(listener,component,handler);sessionListenerAdded=true
             prefs.registerOnSharedPreferenceChangeListener(settingsListener);prefsAdded=true
             val filter=android.content.IntentFilter().apply{
-                addAction(android.content.Intent.ACTION_SCREEN_ON);addAction(android.content.Intent.ACTION_SCREEN_OFF);addAction(android.content.Intent.ACTION_USER_PRESENT)
+                addAction(android.content.Intent.ACTION_SCREEN_ON);addAction(android.content.Intent.ACTION_SCREEN_OFF);addAction(android.content.Intent.ACTION_USER_PRESENT);addAction(android.content.Intent.ACTION_CONFIGURATION_CHANGED)
             }
             if(Build.VERSION.SDK_INT>=33)registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED) else registerReceiver(receiver,filter)
             receiverAdded=true
@@ -152,10 +200,11 @@ class MusicListener : NotificationListenerService() {
                 if(token!=previousToken){previousToken=token;clearTrack();force=true}
                 val sessionStatus=if(controller==null)"삼성 뮤직 재생 세션 없음" else "삼성 뮤직 곡 정보 대기"
                 val state=controller?.playbackState?.state
-                val tick=try{
-                    val result=renderFrame(controller,sessionStatus,SystemClock.elapsedRealtime(),force)
+                val frameStart=SystemClock.elapsedRealtime()
+                val nextDelay=try{
+                    val result=renderFrame(controller,sessionStatus,frameStart,force,::signal)
                     force=false;frameErrors=0
-                    Playback.diagnostics.value=SessionDiagnostics(sessions.map{it.packageName}.distinct(),controller?.packageName.orEmpty(),state,result)
+                    Playback.diagnostics.value=SessionDiagnostics(sessions.map{it.packageName}.distinct(),controller?.packageName.orEmpty(),state,result!=null)
                     result
                 }catch(e:CancellationException){throw e}
                 catch(e:Exception){
@@ -165,13 +214,18 @@ class MusicListener : NotificationListenerService() {
                     Playback.diagnostics.value=SessionDiagnostics(sessions.map{it.packageName}.distinct(),controller?.packageName.orEmpty(),state,false,message)
                     android.util.Log.w("LyriLayer","Playback frame failed",e)
                     if(frameErrors<=3){withTimeoutOrNull(2000L){wake.receive()};continue}
-                    false
+                    null
                 }
-                // No timeout (and no polling) while paused, stopped, screen off, or disabled.
-                if(tick)withTimeoutOrNull(150L){wake.receive()} else wake.receive()
+                // Sleep until the next lyric boundary or an event. No timer while inactive.
+                if(nextDelay!=null){
+                    val remaining=(nextDelay-(SystemClock.elapsedRealtime()-frameStart)).coerceAtLeast(1L)
+                    withTimeoutOrNull(remaining){wake.receive()}
+                }else wake.receive()
             }
         }finally{
-            retryJob.cancel()
+            retryJob.cancel();analysisJob.cancel()
+            if(observerAdded)runCatching{contentResolver.unregisterContentObserver(libraryObserver)}
+            libraryObserverActive=false;audioIndex=null;libraryGeneration++
             if(sessionListenerAdded)runCatching{manager.removeOnActiveSessionsChangedListener(listener)}
             registered.values.forEach{runCatching{it.unregisterCallback(callback)}}
             if(receiverAdded)runCatching{unregisterReceiver(receiver)}
@@ -180,7 +234,7 @@ class MusicListener : NotificationListenerService() {
             wake.close()
         }
     }
-    private fun renderFrame(controller:MediaController?,sessionStatus:String,now:Long,force:Boolean):Boolean {
+    private fun renderFrame(controller:MediaController?,sessionStatus:String,now:Long,force:Boolean,onChanged:()->Unit):Long? {
         val m=controller?.metadata
         val state=controller?.playbackState
         val title=m?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty().ifBlank{m?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).orEmpty()}
@@ -200,7 +254,7 @@ class MusicListener : NotificationListenerService() {
                 else->"플로팅 가사 스위치가 꺼져 있습니다"
             }
             Playback.now.value=NowPlaying(track=track,playing=playing,position=state?.position?.coerceAtLeast(0)?:0,message=reason,overlayStatus=reason)
-            return false
+            return null
         }
         // Test uses metadata only for the title; missing metadata never blocks the overlay.
         if(testMode){
@@ -211,24 +265,25 @@ class MusicListener : NotificationListenerService() {
                 if(show(OverlayTest.text(title.ifBlank{m?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).orEmpty()})))"테스트 플로팅 표시 중" else overlayFailure.ifBlank{"오버레이 표시 실패"}
             }else{hide();if(!playing&&controller==null)sessionStatus else reason}
             Playback.now.value=NowPlaying(track=track,playing=playing,position=state?.position?.coerceAtLeast(0)?:0, message="플로팅 테스트 모드",overlayStatus=status)
-            return true
+            return OverlayTiming.SAFETY_MS
         }
         if(title.isBlank() || state==null) {
             clearTrack()
             val fallback=OverlayContent.decide(prefs.getBoolean("overlay",false),playing,permission,interactive,false,prefs.getBoolean(OverlayContent.SHOW_MISSING,true),m?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).orEmpty(),"",null,false,null,false,"곡 정보 대기")
             val status=if(fallback!=null){if(show(fallback))"곡 정보 플로팅 표시 중" else overlayFailure.ifBlank{"오버레이 표시 실패"}}else{hide();sessionStatus}
             Playback.now.value=NowPlaying(playing=playing,message=sessionStatus,overlayStatus=status)
-            return true
+            return OverlayTiming.SAFETY_MS
         }
         val track=Track(title,m?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty(),m?.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty(),m?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0)
         if(activeKey!=track.key||force) {
             fetch?.cancel();activeKey=track.key;resolvedKey=null;lyric=null;lines=emptyList();estimatedLines=emptyList();plainSnippet=""
             excludedTrack=MusicRules.excluded("", "",track.title);searching=!excludedTrack
             error=if(excludedTrack)"녹음 및 기타 오디오는 제외됩니다" else "가사 검색 중"
+            val allowOnline=prefs.getBoolean(OverlayTiming.AUTO_SEARCH_KEY,true)
             fetch=scope.launch {
                 try {
                     if(excludedTrack)return@launch
-                    val match=withContext(Dispatchers.IO) { runCatching { Library.allAudio(this@MusicListener) }.getOrDefault(emptyList()).filter { MusicRules.norm(it.title)==MusicRules.norm(track.title) && (MusicRules.clean(track.artist).isBlank() || MusicRules.artistMatches(it.artist,track.artist)) && (track.duration<=0 || kotlin.math.abs(it.duration-track.duration)<=3000) }.let { matches -> matches.firstOrNull { it.excluded } ?: matches.distinctBy { it.key }.singleOrNull() } }
+                    val match=matchingTrack(track)
                     val actual=match ?: run { searching=false;error="음악 목록에서 곡을 확인할 수 없습니다 · 음악 접근 권한 확인";return@launch }
                     resolvedKey=actual.key
                     if(actual.excluded){excludedTrack=true;searching=false;error="녹음 및 기타 오디오는 제외됩니다";return@launch}
@@ -240,21 +295,22 @@ class MusicListener : NotificationListenerService() {
                     val cached=dao.get(actual.key)
                     apply(cached)
                     searching=cached?.status!="FOUND"&&cached?.status!="INSTRUMENTAL"
+                    onChanged()
                     coroutineScope {
                         launch {
                             if(cached?.status!="FOUND"&&cached?.status!="INSTRUMENTAL"){
-                                try { Repository.resolve(this@MusicListener,actual) }
+                                try { Repository.resolve(this@MusicListener,actual,allowOnline=allowOnline) }
                                 catch(e:CancellationException){throw e}
                                 catch(e:Exception){if(lyric?.status!="FOUND")error="가사 검색 오류 · ${e.message ?: "앱에서 다시 검색하세요"}"}
-                                finally{if(isActive)searching=false}
+                                finally{if(isActive){searching=false;if(!allowOnline&&lyric==null)error="자동 온라인 검색 꺼짐";onChanged()}}
                             }
                         }
-                        dao.observe().collect { all ->
-                            val current=all.find { it.key==actual.key }
-                            if(current!=lyric)apply(current)
+                        dao.observeKey(actual.key).collect { current ->
+                            if(current!=lyric){apply(current);onChanged()}
                         }
                     }
                 } catch(e: CancellationException) { throw e } catch(e: Exception) { searching=false;error="가사 검색 오류 · ${e.message ?: "앱에서 다시 검색하세요"}" }
+                finally{if(isActive)onChanged()}
             }
         }
         val delta=if(playing && state.lastPositionUpdateTime>0) ((now-state.lastPositionUpdateTime).coerceAtLeast(0)*state.playbackSpeed).toLong() else 0
@@ -290,7 +346,13 @@ class MusicListener : NotificationListenerService() {
             else overlayFailure.ifBlank{"오버레이 표시 실패"}
         }else{hide();reason}
         Playback.now.value=NowPlaying(track,playing,position,lyric,index,error,status,resolvedKey)
-        return true
+        val timedLines=when{
+            lines.isNotEmpty()->lines
+            plainMode==PlainSync.ESTIMATE&&aiPercent==null->estimatedLines
+            else->emptyList()
+        }
+        val offset=if(lines.isNotEmpty())lyric?.offset?:0L else 0L
+        return OverlayTiming.nextDelay(timedLines,position,offset,state.playbackSpeed,state.lastPositionUpdateTime>0,track.duration)
     }
     // Use the current display area so rotation and screen size changes are reflected.
     @Suppress("DEPRECATION")
@@ -317,6 +379,10 @@ class MusicListener : NotificationListenerService() {
         val percent=OverlayPosition.normalize(prefs.getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))
         val windowAlpha=OverlayTransparency.windowAlpha(prefs.getInt(OverlayTransparency.KEY,OverlayTransparency.DEFAULT))
         val existing=overlay
+        val key=LayoutKey(width,areaHeight,dp,ctx.resources.configuration.fontScale,percent,windowAlpha)
+        val previous=displayedLayout
+        val contentChanged=existing==null||displayedContent!=content
+        if(!contentChanged&&previous==key)return true
         val view=existing?:LinearLayout(ctx).apply {
             orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER
             setPadding((16*dp).toInt(),(10*dp).toInt(),(16*dp).toInt(),(10*dp).toInt())
@@ -327,7 +393,7 @@ class MusicListener : NotificationListenerService() {
                 max=100;progressTintList=ColorStateList.valueOf(0xFFCEB5FF.toInt());visibility=View.GONE
             },LinearLayout.LayoutParams(-1,(5*dp).toInt()).apply{topMargin=(6*dp).toInt()})
         }
-            if(existing==null||displayedContent!=content){
+            if(contentChanged){
                 val primary=view.getChildAt(0) as TextView
                 val detail=view.getChildAt(1) as TextView
                 val bar=view.getChildAt(2) as ProgressBar
@@ -340,8 +406,10 @@ class MusicListener : NotificationListenerService() {
                 displayedContent=content
             }
             val oldParams=existing?.layoutParams as? WindowManager.LayoutParams
-            // Re-measure even when only the position or display size changed.
-            view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(areaHeight,View.MeasureSpec.AT_MOST))
+            // A position or transparency change does not require text remeasurement.
+            if(contentChanged||previous==null||previous.width!=width||previous.height!=areaHeight||previous.density!=dp||previous.fontScale!=key.fontScale){
+                view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(areaHeight,View.MeasureSpec.AT_MOST))
+            }
             val y=OverlayPosition.topOffset(percent,areaHeight,view.measuredHeight,(8*dp).toInt())
             if(oldParams==null){
                 val params=WindowManager.LayoutParams(width,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,PixelFormat.TRANSLUCENT).apply {
@@ -356,6 +424,7 @@ class MusicListener : NotificationListenerService() {
             }else if(oldParams.y!=y||oldParams.width!=width||oldParams.alpha!=windowAlpha){
                 oldParams.y=y;oldParams.width=width;oldParams.alpha=windowAlpha;wm.updateViewLayout(view,oldParams)
             }
+            displayedLayout=key
             overlayFailure=""
             return true
         }catch(e:Exception){
@@ -364,7 +433,7 @@ class MusicListener : NotificationListenerService() {
             android.util.Log.w("LyriLayer","Overlay layout failed",e);return false
         }
     }
-    private fun hide() { overlay?.let { runCatching { wm.removeViewImmediate(it) } }; overlay=null;displayedContent=null }
+    private fun hide() { overlay?.let { runCatching { wm.removeViewImmediate(it) } }; overlay=null;displayedContent=null;displayedLayout=null }
     override fun onListenerDisconnected() {
         Playback.connected.value=false;monitor?.cancel();monitor=null;clearTrack();Playback.diagnostics.value=SessionDiagnostics()
         hide();Playback.now.value=NowPlaying(message="음악 감지 서비스 연결 대기",overlayStatus="음악 감지 서비스 연결 대기")

@@ -11,6 +11,8 @@ import kotlinx.coroutines.sync.withLock
 
 internal data class QueueLive(val running:Boolean=false, val stopping:Boolean=false, val key:String?=null, val percent:Int=0, val stage:String="", val preview:String="",val startedAt:Long=0L,val completedCount:Int=0,val elapsedTotal:Long=0L)
 internal object AiQueue {
+    const val CHARGING_ONLY_KEY="ai_queue_charging_only"
+    private fun powerAllowed(c:Context)=!c.getSharedPreferences("settings",Context.MODE_PRIVATE).getBoolean(CHARGING_ONLY_KEY,false)||c.getSystemService(android.os.BatteryManager::class.java)?.isCharging==true
     private val scope = CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private val mutex = Mutex()
     private var task: Job? = null
@@ -43,6 +45,7 @@ internal object AiQueue {
     fun start(context:Context) {
         if(task?.isActive==true||_live.value.running)return
         val c=context.applicationContext
+        if(!powerAllowed(c)){_notice.value="충전 중에만 일괄 분석할 수 있습니다.";return}
         if(!OnlineLyricsSettings.enabled(c)&&(!DeviceLyrics.supported()||!DeviceLyrics.ready(c))){_notice.value="AI 모델을 먼저 다운로드하세요.";return}
         if(!FloatingPermissions.audioGranted(c)){_notice.value="음악 접근 권한을 허용하세요.";return}
         _live.value=QueueLive(running=true,stage="대기열 준비")
@@ -55,6 +58,7 @@ internal object AiQueue {
                 var completedCount=0
                 var elapsedTotal=0L
                 while(isActive) {
+                    if(!powerAllowed(c)){_notice.value="충전이 중단되어 일괄 분석을 멈췄습니다. 남은 곡은 다시 시작할 수 있습니다.";return@launch}
                     val item=mutex.withLock {
                         val next=dao.nextPending()?:return@withLock null
                         next.copy(state="running",message="분석 준비").also{active=it;dao.update(it)}

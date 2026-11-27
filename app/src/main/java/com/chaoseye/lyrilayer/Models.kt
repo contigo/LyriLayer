@@ -17,6 +17,7 @@ data class Lyric(@PrimaryKey val key: String, val plain: String = "", val synced
     @Query("DELETE FROM lyrics") suspend fun clearAll(): Int
     @Query("SELECT * FROM lyrics WHERE `key` = :key") suspend fun get(key: String): Lyric?
     @Query("SELECT * FROM lyrics") fun observe(): Flow<List<Lyric>>
+    @Query("SELECT * FROM lyrics WHERE `key` = :key") fun observeKey(key: String): Flow<Lyric?>
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun put(lyric: Lyric)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insert(lyric: Lyric): Long
     @Query("UPDATE lyrics SET plain=:plain, synced=:synced, source=:source, status=:status, fetched=:fetched WHERE `key`=:key AND edited=0")

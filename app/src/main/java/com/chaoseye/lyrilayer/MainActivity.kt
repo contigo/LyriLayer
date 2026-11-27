@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
         }
         var modelReady by remember { mutableStateOf(DeviceLyrics.ready(this)) }
         val aiPrefs=remember{getSharedPreferences("settings",MODE_PRIVATE)}
+        var aiChargingOnly by remember{mutableStateOf(aiPrefs.getBoolean(AiQueue.CHARGING_ONLY_KEY,false))}
         var aiModel by remember{mutableStateOf(DeviceLyrics.selected(this).id)}
         var aiThreads by remember{mutableIntStateOf(aiPrefs.getInt(AiPerformance.THREADS_KEY,0))}
         var aiReuse by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.REUSE_KEY,true))}
@@ -196,6 +197,7 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled=resetBusy) { }
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
+        var overlayAutoSearch by remember { mutableStateOf(prefs.getBoolean(OverlayTiming.AUTO_SEARCH_KEY,true)) }
         var showMissingOverlay by remember { mutableStateOf(prefs.getBoolean(OverlayContent.SHOW_MISSING,true)) }
         var plainMode by remember { mutableStateOf(prefs.getString(PlainSync.MODE_KEY,PlainSync.ESTIMATE)?:PlainSync.ESTIMATE) }
         var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
@@ -305,7 +307,7 @@ class MainActivity : ComponentActivity() {
                         Text("플로팅 상태: "+if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"서비스 연결 대기" else now.overlayStatus,fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
                         Text("감지된 세션: "+sessionDiagnostics.packages.joinToString(", ").ifBlank{"없음"},fontSize=12.sp)
                         Text("선택 세션: "+sessionDiagnostics.selectedPackage.ifBlank{"없음"}+" · 상태 "+(sessionDiagnostics.state?.toString()?:"없음"),fontSize=12.sp)
-                        Text(if(sessionDiagnostics.ticking)"싱크 갱신 중 (150ms)" else "이벤트 대기",fontSize=12.sp,color=neutralColor)
+                        Text(if(sessionDiagnostics.ticking)"싱크 갱신 중 (가사 시간 기반)" else "이벤트 대기",fontSize=12.sp,color=neutralColor)
                         if(sessionDiagnostics.error.isNotBlank())Text(sessionDiagnostics.error,fontSize=12.sp,color=failureColor)
                         OutlinedButton(enabled=!overlayProbeRunning&&overlayAllowed,onClick={
                             overlayProbeRunning=true
@@ -524,6 +526,13 @@ class MainActivity : ComponentActivity() {
                             }
                             Switch(showMissingOverlay,{showMissingOverlay=it;prefs.edit().putBoolean(OverlayContent.SHOW_MISSING,it).apply()})
                         }
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){
+                                Text("재생 중 자동 온라인 검색",fontSize=16.sp)
+                                Text("끄면 저장된 가사와 로컬 파일만 확인합니다.",fontSize=12.sp,color=neutralColor)
+                            }
+                            Switch(overlayAutoSearch,{overlayAutoSearch=it;prefs.edit().putBoolean(OverlayTiming.AUTO_SEARCH_KEY,it).apply()})
+                        }
                         HorizontalDivider()
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
                             Text("가사 투명도: $overlayTransparency%",fontSize=16.sp)
@@ -612,6 +621,13 @@ class MainActivity : ComponentActivity() {
                         }
                         HorizontalDivider()
                         Text("AI 분석 성능 설정",fontSize=18.sp)
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Column(Modifier.weight(1f)){
+                                Text("충전 중에만 일괄 분석")
+                                Text("충전 중단 시 현재 곡 완료 후 멈춥니다.",fontSize=12.sp)
+                            }
+                            Switch(aiChargingOnly,{aiChargingOnly=it;aiPrefs.edit().putBoolean(AiQueue.CHARGING_ONLY_KEY,it).apply()},enabled=!performanceBusy)
+                        }
                         AiPerformance.models.forEach{spec->
                             Row(verticalAlignment=Alignment.CenterVertically){
                                 RadioButton(selected=aiModel==spec.id,enabled=!performanceBusy,onClick={

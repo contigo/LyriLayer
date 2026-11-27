@@ -134,12 +134,18 @@ object Repository {
         LyricsDb.get(c).dao().put(Lyric(t.key,r.plain,r.synced,"LRCLIB (USER)",if(hasLyrics)"FOUND" else "INSTRUMENTAL",edited=true))
     }
     suspend fun clearForReset(c:Context):Int=gate.withLock { LyricsDb.get(c).dao().clearAll() }
-    suspend fun resolve(c:Context,t:Track,force:Boolean=false):Lyric=gate.withLock{
+    suspend fun resolve(c:Context,t:Track,force:Boolean=false,allowOnline:Boolean=true):Lyric=gate.withLock{
         withContext(Dispatchers.IO){
             if(t.excluded||MusicRules.excluded("",t.fileName,t.title))throw IOException("녹음 파일은 검색하지 않습니다")
             val dao=LyricsDb.get(c).dao();val old=dao.get(t.key)
-            if(old!=null&&(old.edited||(!force&&(old.status=="FOUND"||old.status=="INSTRUMENTAL"||(old.status=="NOT_FOUND"&&old.source==MISS&&System.currentTimeMillis()-old.fetched<86400000)))))return@withContext old
-            val result=try{LocalLyrics.find(c,t)?:online(c,t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)}catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
+            if(old!=null&&(old.edited||(!force&&(old.status=="FOUND"||old.status=="INSTRUMENTAL"||(allowOnline&&old.status=="NOT_FOUND"&&old.source==MISS&&System.currentTimeMillis()-old.fetched<86400000)))))return@withContext old
+            val result=try{
+                val local=LocalLyrics.find(c,t)
+                ensureActive()
+                if(local!=null)local
+                else if(!allowOnline)return@withContext old?:Lyric(t.key,status="NOT_FOUND",source="LOCAL_ONLY")
+                else online(c,t)?:Lyric(t.key,status="NOT_FOUND",source=MISS)
+            }catch(e:IOException){if(old?.status=="FOUND")return@withContext old;throw e}
             ensureActive()
             if(old?.status=="FOUND"&&(result.status!="FOUND"||(old.synced.isNotBlank()&&result.synced.isBlank())))return@withContext old
             if(dao.insert(result)==-1L)dao.updateAuto(result.key,result.plain,result.synced,result.source,result.status,result.fetched)
