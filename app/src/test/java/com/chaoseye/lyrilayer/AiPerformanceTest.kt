@@ -9,17 +9,15 @@ class AiPerformanceTest{
         assertEquals(8,AiPerformance.threads(8,12))
         assertEquals(1,AiPerformance.threads(0,0))
     }
-    @Test fun modelSelection(){
-        assertEquals("small",AiPerformance.model(null).id)
-        assertEquals("base",AiPerformance.model("base").id)
-        assertEquals("small",AiPerformance.model("small").id)
-        assertTrue(AiPerformance.small.sizeValid(190085487L))
-        assertFalse(AiPerformance.small.sizeValid(190085486L))
-        assertEquals(64,AiPerformance.small.sha.length)
-        assertEquals("tiny",AiPerformance.model("tiny").id)
-        assertTrue(AiPerformance.base.sizeValid(59707625))
-        assertFalse(AiPerformance.tiny.sizeValid(59707625))
-        assertEquals(64,AiPerformance.tiny.sha.length)
+    @Test fun fixedSmallModel(){
+        val model=AiPerformance.small
+        assertEquals("small",model.id)
+        assertEquals("ggml-small-q5_1.bin",model.filename)
+        assertTrue(model.sizeValid(190085487L))
+        assertFalse(model.sizeValid(190085486L))
+        assertFalse(model.sizeValid(59707625L))
+        assertFalse(model.sizeValid(32000000L))
+        assertEquals(64,model.sha.length)
     }
     @Test fun timeEstimate(){
         assertEquals(60000L,AiPerformance.remainingMs(60000,50)!!)

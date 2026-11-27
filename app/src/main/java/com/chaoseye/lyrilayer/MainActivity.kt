@@ -168,14 +168,12 @@ class MainActivity : ComponentActivity() {
         }
         var modelReady by remember { mutableStateOf(DeviceLyrics.ready(this)) }
         val aiPrefs=remember{getSharedPreferences("settings",MODE_PRIVATE)}
-        var aiModel by remember{mutableStateOf(DeviceLyrics.selected(this).id)}
         var aiThreads by remember{mutableIntStateOf(aiPrefs.getInt(AiPerformance.THREADS_KEY,0))}
         var aiReuse by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.REUSE_KEY,true))}
         var onlineBeforeAi by remember { mutableStateOf(OnlineLyricsSettings.enabled(this)) }
         var autoSaveExtract by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.EXTRACT_KEY,AiAutoSave.DEFAULT_ENABLED))}
         var autoSaveAlign by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.ALIGN_KEY,AiAutoSave.DEFAULT_ENABLED))}
         var reviewUncertain by remember{mutableStateOf(aiPrefs.getBoolean(AiAutoSave.REVIEW_UNCERTAIN_KEY,AiAutoSave.DEFAULT_ENABLED))}
-        var aiLanguageOnce by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.LANGUAGE_KEY,false))}
         val activeAnalysis by DeviceLyrics.activeAnalysis.collectAsStateWithLifecycle()
         var modelBusy by remember { mutableStateOf(false) }
         var modelProgress by remember { mutableIntStateOf(0) }
@@ -642,15 +640,7 @@ class MainActivity : ComponentActivity() {
                         HorizontalDivider()
                         Text("AI 분석 성능 설정",fontSize=18.sp)
                         Text("AI 분석은 시작 버튼을 눌렀을 때만 실행됩니다.",fontSize=12.sp,color=neutralColor)
-                        AiPerformance.models.forEach{spec->
-                            Row(verticalAlignment=Alignment.CenterVertically){
-                                RadioButton(selected=aiModel==spec.id,enabled=!performanceBusy,onClick={
-                                    aiModel=spec.id;aiPrefs.edit().putString(AiPerformance.MODEL_KEY,spec.id).apply()
-                                    modelReady=DeviceLyrics.ready(this@MainActivity);modelMessage=""
-                                })
-                                Text(spec.title,fontSize=14.sp)
-                            }
-                        }
+                        Text(AiPerformance.small.title,fontSize=14.sp)
                         Text("CPU 스레드 · 현재 "+AiPerformance.threads(aiThreads,Runtime.getRuntime().availableProcessors())+"개",fontSize=14.sp)
                         Row(horizontalArrangement=Arrangement.spacedBy(4.dp)){
                             listOf(0,2,4,6,8).forEach{n->
@@ -658,10 +648,9 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Row(verticalAlignment=Alignment.CenterVertically){Text("일괄 분석 모델 재사용",Modifier.weight(1f));Switch(aiReuse,{aiReuse=it;aiPrefs.edit().putBoolean(AiPerformance.REUSE_KEY,it).apply()},enabled=!performanceBusy)}
-                        if(aiModel=="small")Text("Small · 대표 언어 자동 감지 최적화 (혼합 언어는 검토 필요)",fontSize=12.sp)
-                        else Row(verticalAlignment=Alignment.CenterVertically){Text("곡당 언어 감지 1회 (혼합 언어 주의)",Modifier.weight(1f));Switch(aiLanguageOnce,{aiLanguageOnce=it;aiPrefs.edit().putBoolean(AiPerformance.LANGUAGE_KEY,it).apply()},enabled=!performanceBusy)}
+                        Text("대표 언어 자동 감지 최적화 (혼합 언어는 검토 필요)",fontSize=12.sp)
                         Text("CPU ARM64 최적화 · GPU 가속은 아직 미지원",fontSize=12.sp)
-                        Text(if(modelReady)AiPerformance.model(aiModel).title+" · 모델 준비됨" else "선택 모델을 최초 1회 다운로드하세요. 이후 음원은 기기에서만 분석합니다.")
+                        Text(if(modelReady)"Small Q5_1 · 모델 준비됨" else "Small Q5_1 모델을 최초 1회 다운로드하세요. 이후 음원은 기기에서만 분석합니다.")
                         Button(enabled=!performanceBusy&&DeviceLyrics.supported(),onClick={scope.launch {
                             modelBusy=true;modelProgress=0;modelMessage="모델 다운로드 중"
                             try{DeviceLyrics.prepare(this@MainActivity){n->runOnUiThread{modelProgress=n}};modelReady=true;modelMessage="모델 준비 완료"}

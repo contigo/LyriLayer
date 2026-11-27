@@ -8,7 +8,6 @@ android {
     namespace = "com.chaoseye.lyrilayer"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
-    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     defaultConfig {
         applicationId = "com.chaoseye.lyrilayer"
         manifestPlaceholders["appLabel"] = "LyriLayer"
@@ -16,7 +15,6 @@ android {
         minSdk = 26
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_shared" } }
         versionCode = 45
         versionName = "0.1.44"
     }
@@ -30,8 +28,6 @@ android {
             isDebuggable = false
         }
     }
-    // Both native modules use the same pinned NDK and shared C++ runtime.
-    packaging { jniLibs.pickFirsts += "lib/arm64-v8a/libc++_shared.so" }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

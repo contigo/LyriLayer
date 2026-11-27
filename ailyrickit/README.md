@@ -19,3 +19,5 @@ word-level timestamps. Only the active V16 policy components are included.
 Build: gradle :ailyrickit:testDebugUnitTest :ailyrickit:assembleRelease.
 Android SDK/NDK, native inference and real-device validation are required before
 shipping; JVM smoke tests do not establish Android performance or lyric accuracy.
+
+LyriLayer now uses only this engine and model. Old app model preferences are ignored; downloaded legacy files and stored lyrics are not automatically deleted.
