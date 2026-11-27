@@ -15,8 +15,8 @@ android {
         minSdk = 26
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
-        versionCode = 45
-        versionName = "0.1.44"
+        versionCode = 46
+        versionName = "0.1.45"
     }
     buildTypes {
         getByName("debug") {

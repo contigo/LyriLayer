@@ -51,9 +51,19 @@ jobs:
       - name: Install Rust Android toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android
       - name: Run unit tests
-        run: gradle :lyrickit:testDebugUnitTest :musickit:testDebugUnitTest :musickit:assembleRelease :recognitionkit:testDebugUnitTest :recognitionkit:assembleRelease :app:testDebugUnitTest --stacktrace
+        run: gradle :lyrickit:testDebugUnitTest :musickit:testDebugUnitTest :musickit:assembleRelease :recognitionkit:testDebugUnitTest :recognitionkit:assembleRelease :ailyrickit:testDebugUnitTest :ailyrickit:assembleRelease :app:testDebugUnitTest --stacktrace
       - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace
+      - name: Verify single Whisper engine in APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -Z1 app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/apk-entries.txt"
+          grep -Fx 'lib/arm64-v8a/libailyrickit_whisper.so' "$RUNNER_TEMP/apk-entries.txt"
+          if grep -F 'liblyrilayer_whisper.so' "$RUNNER_TEMP/apk-entries.txt"; then
+            echo 'Legacy Whisper library is still packaged'
+            exit 1
+          fi
       - name: Build unsigned production AAB (Play upload key required before submission)
         run: gradle :app:bundleRelease --stacktrace
       - name: Sign and verify APK
@@ -105,6 +115,12 @@ jobs:
           path: recognitionkit/build/outputs/aar/recognitionkit-release.aar
           retention-days: 7
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AILyricKit-AAR
+          path: ailyrickit/build/outputs/aar/ailyrickit-release.aar
+          retention-days: 7
+          if-no-files-found: error
       - name: Publish verified APK to GitHub Releases
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -128,4 +144,4 @@ jobs:
             exit 1
           fi
           NOTES="$(printf 'Automated Android development release (com.chaoseye.lyrilayer.debug).\n- Installs separately from com.chaoseye.lyrilayer; independent app data and permissions.\n\n- Version: %s\n- Commit: %s\n- Unit tests and APK build passed.\n- %s\n- Real-device validation pending.\n- Build: https://github.com/%s/actions/runs/%s\n' "$VERSION" "$GITHUB_SHA" "$APK_SIGNING_NOTE" "$GH_REPO" "$GITHUB_RUN_ID")"
-          gh release create "$TAG" "$APK" musickit/build/outputs/aar/musickit-release.aar recognitionkit/build/outputs/aar/recognitionkit-release.aar --target "$GITHUB_SHA" --title "LyriLayer Dev $TAG" --notes "$NOTES" --prerelease
+          gh release create "$TAG" "$APK" musickit/build/outputs/aar/musickit-release.aar recognitionkit/build/outputs/aar/recognitionkit-release.aar ailyrickit/build/outputs/aar/ailyrickit-release.aar --target "$GITHUB_SHA" --title "LyriLayer Dev $TAG" --notes "$NOTES" --prerelease
