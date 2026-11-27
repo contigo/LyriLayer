@@ -155,7 +155,6 @@ class MainActivity : ComponentActivity() {
         }
         var modelReady by remember { mutableStateOf(DeviceLyrics.ready(this)) }
         val aiPrefs=remember{getSharedPreferences("settings",MODE_PRIVATE)}
-        var aiChargingOnly by remember{mutableStateOf(aiPrefs.getBoolean(AiQueue.CHARGING_ONLY_KEY,false))}
         var aiModel by remember{mutableStateOf(DeviceLyrics.selected(this).id)}
         var aiThreads by remember{mutableIntStateOf(aiPrefs.getInt(AiPerformance.THREADS_KEY,0))}
         var aiReuse by remember{mutableStateOf(aiPrefs.getBoolean(AiPerformance.REUSE_KEY,true))}
@@ -197,10 +196,7 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled=resetBusy) { }
         val prefs=remember { getSharedPreferences("settings",MODE_PRIVATE) }
         var overlay by remember { mutableStateOf(prefs.getBoolean("overlay",false)) }
-        var overlayAutoSearch by remember { mutableStateOf(prefs.getBoolean(OverlayTiming.AUTO_SEARCH_KEY,true)) }
-        var showMissingOverlay by remember { mutableStateOf(prefs.getBoolean(OverlayContent.SHOW_MISSING,true)) }
         var plainMode by remember { mutableStateOf(prefs.getString(PlainSync.MODE_KEY,PlainSync.ESTIMATE)?:PlainSync.ESTIMATE) }
-        var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
         var overlayTransparency by remember { mutableIntStateOf(OverlayTransparency.normalize(prefs.getInt(OverlayTransparency.KEY,OverlayTransparency.DEFAULT))) }
         fun saveOverlayTransparency(value:Int){
             val normalized=OverlayTransparency.normalize(value)
@@ -294,11 +290,7 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick={settingsScreen="main"}){Text("‹ 뒤로")}
                         Text("플로팅 실행 테스트",style=MaterialTheme.typography.titleLarge,fontSize=22.sp)
                     }
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Text("테스트 모드",Modifier.weight(1f),fontSize=16.sp)
-                            Switch(testMode,{testMode=it;prefs.edit().putBoolean("overlay_test",it).apply();if(it){if(!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}})
-                        }
-                        Text("ON: 삼성 뮤직 재생 시 가사 검색 없이 현재 재생 중인 곡 제목을 테스트 플로팅에 표시합니다. 일시 정지/정지 또는 화면 꺼짐 시 숨깁니다. 기존 플로팅 가사 스위치와 독립적으로 동작합니다.",fontSize=14.sp)
+                        Text("재생 상태와 플로팅 권한을 확인합니다. 별도 창 테스트는 버튼을 누른 경우에만 5초간 표시됩니다.",fontSize=14.sp)
                         Text("알림 접근: "+if(listenerAllowed)"허용됨" else "권한 필요",color=if(listenerAllowed)successColor else failureColor,fontSize=14.sp)
                         Text("음악 감지 서비스: "+if(listenerConnected)"연결됨" else "연결 대기",color=if(listenerConnected)successColor else neutralColor,fontSize=14.sp)
                         Text("다른 앱 위에 표시: "+if(overlayAllowed)"허용됨" else "권한 필요",color=if(overlayAllowed)successColor else failureColor,fontSize=14.sp)
@@ -518,21 +510,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 "floating"->{
                         Row(verticalAlignment=Alignment.CenterVertically) { Text("플로팅 가사",Modifier.weight(1f)); Switch(overlay,{overlay=it;prefs.edit().putBoolean("overlay",it).apply();if(it){if(!allowed||!listenerAllowed||!overlayAllowed)startAccessPass() else FloatingPermissions.rebind(this@MainActivity)}}) }
-                        Text("음악 재생 중 홈 화면이나 다른 앱에서도 플로팅 가사를 표시합니다. 화면이 꺼지거나 재생이 멈추면 숨깁니다.")
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Column(Modifier.weight(1f)){
-                                Text("가사가 없는 음악도 표시",fontSize=16.sp)
-                                Text("곡 제목, 검색 상태 및 AI 분석 진행률",fontSize=12.sp,color=neutralColor)
-                            }
-                            Switch(showMissingOverlay,{showMissingOverlay=it;prefs.edit().putBoolean(OverlayContent.SHOW_MISSING,it).apply()})
-                        }
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Column(Modifier.weight(1f)){
-                                Text("재생 중 자동 온라인 검색",fontSize=16.sp)
-                                Text("끄면 저장된 가사와 로컬 파일만 확인합니다.",fontSize=12.sp,color=neutralColor)
-                            }
-                            Switch(overlayAutoSearch,{overlayAutoSearch=it;prefs.edit().putBoolean(OverlayTiming.AUTO_SEARCH_KEY,it).apply()})
-                        }
+                        Text("재생 중 저장된 가사만 표시합니다. 가사가 없거나 화면이 꺼지면 숨깁니다. 재생 중 자동 검색이나 AI 분석은 실행하지 않습니다.")
                         HorizontalDivider()
                         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
                             Text("가사 투명도: $overlayTransparency%",fontSize=16.sp)
@@ -552,7 +530,7 @@ class MainActivity : ComponentActivity() {
                         Text("글자와 배경에 함께 적용됩니다. 다른 앱의 터치 통과를 위해 범위를 제한합니다.",fontSize=12.sp,color=neutralColor)
                         HorizontalDivider()
                         Text("일반 가사 플로팅 방식",fontSize=16.sp)
-                        listOf(PlainSync.ESTIMATE to "자동 스크롤 (추정)",PlainSync.STATIC to "일반 가사 고정 표시",PlainSync.OFF to "곡 정보만 표시").forEach{(key,label)->
+                        listOf(PlainSync.ESTIMATE to "자동 스크롤 (추정)",PlainSync.STATIC to "일반 가사 고정 표시",PlainSync.OFF to "일반 가사 표시 안 함").forEach{(key,label)->
                             Row(verticalAlignment=Alignment.CenterVertically){
                                 RadioButton(selected=plainMode==key,onClick={plainMode=key;prefs.edit().putString(PlainSync.MODE_KEY,key).apply()})
                                 Text(label,fontSize=14.sp)
@@ -572,7 +550,7 @@ class MainActivity : ComponentActivity() {
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                                 Column(Modifier.weight(1f)){
                                     Text("플로팅 실행 테스트",fontSize=16.sp)
-                                    Text(if(testMode)"테스트 모드 ON" else "테스트 모드 OFF",fontSize=12.sp,color=if(testMode)successColor else neutralColor)
+                                    Text("권한 확인 · 5초 단독 테스트",fontSize=12.sp,color=neutralColor)
                                 }
                                 Text("›",fontSize=24.sp)
                             }
@@ -621,13 +599,7 @@ class MainActivity : ComponentActivity() {
                         }
                         HorizontalDivider()
                         Text("AI 분석 성능 설정",fontSize=18.sp)
-                        Row(verticalAlignment=Alignment.CenterVertically){
-                            Column(Modifier.weight(1f)){
-                                Text("충전 중에만 일괄 분석")
-                                Text("충전 중단 시 현재 곡 완료 후 멈춥니다.",fontSize=12.sp)
-                            }
-                            Switch(aiChargingOnly,{aiChargingOnly=it;aiPrefs.edit().putBoolean(AiQueue.CHARGING_ONLY_KEY,it).apply()},enabled=!performanceBusy)
-                        }
+                        Text("AI 분석은 시작 버튼을 눌렀을 때만 실행됩니다.",fontSize=12.sp,color=neutralColor)
                         AiPerformance.models.forEach{spec->
                             Row(verticalAlignment=Alignment.CenterVertically){
                                 RadioButton(selected=aiModel==spec.id,enabled=!performanceBusy,onClick={

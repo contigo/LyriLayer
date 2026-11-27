@@ -3,7 +3,6 @@ package com.chaoseye.lyrilayer
 import kotlin.math.ceil
 
 internal object OverlayTiming {
-    const val AUTO_SEARCH_KEY="overlay_auto_online_search"
     const val SAFETY_MS=5000L
     const val FALLBACK_MS=500L
 

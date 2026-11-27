@@ -17,8 +17,8 @@ android {
         targetSdk = 36
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_shared" } }
-        versionCode = 43
-        versionName = "0.1.42"
+        versionCode = 44
+        versionName = "0.1.43"
     }
     buildTypes {
         getByName("debug") {
