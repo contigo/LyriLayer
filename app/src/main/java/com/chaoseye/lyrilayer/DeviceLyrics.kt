@@ -35,8 +35,6 @@ object DeviceLyrics {
     internal val activeAnalysis=_activeAnalysis.asStateFlow()
     private var cachedHandle=0L
     private var cachedModel=""
-    private var releaseJob:Job?=null
-    private val idleScope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val verified=mutableMapOf<String,Pair<Long,Long>>()
     private val lock=Mutex()
     private val client=OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(60,TimeUnit.SECONDS).callTimeout(20,TimeUnit.MINUTES).build()
@@ -50,13 +48,7 @@ object DeviceLyrics {
         if(cachedHandle!=0L)NativeWhisper.close(cachedHandle)
         cachedHandle=0L;cachedModel=""
     }
-    private fun releaseLater(){
-        releaseJob?.cancel()
-        releaseJob=idleScope.launch{
-            delay(60_000)
-            lock.withLock{closeCached()}
-        }
-    }
+    internal suspend fun releaseBatchModel()=withContext(NonCancellable+Dispatchers.IO){lock.withLock{closeCached()}}
     private suspend fun verifyModel(file:File,spec:WhisperModel):Boolean{
         if(!spec.sizeValid(file.length()))return false
         val stamp=file.length() to file.lastModified()
@@ -76,7 +68,7 @@ object DeviceLyrics {
             val spec=selected(c)
             val dst=model(c,spec);dst.parentFile?.mkdirs()
             if(verifyModel(dst,spec)){progress(100);return@withContext}
-            releaseJob?.cancel();closeCached();verified.remove(spec.id)
+            closeCached();verified.remove(spec.id)
             val tmp=File(dst.parentFile,spec.filename+".part")
             try{
                 client.newCall(Request.Builder().url(spec.url).build()).execute().use{r->
@@ -99,7 +91,7 @@ object DeviceLyrics {
             }finally{tmp.delete()}
         }
     }
-    suspend fun extract(c:Context,t:Track,language:String,preview:(String)->Unit={},progress:(Int,String)->Unit):String=lock.withLock{
+    suspend fun extract(c:Context,t:Track,language:String,retainForBatch:Boolean=false,preview:(String)->Unit={},progress:(Int,String)->Unit):String=lock.withLock{
         _activeAnalysis.value=AiAnalysisProgress(t.key,0)
         try {
         withContext(Dispatchers.IO){
@@ -115,7 +107,6 @@ object DeviceLyrics {
             val threads=AiPerformance.threads(settings.getInt(AiPerformance.THREADS_KEY,0),Runtime.getRuntime().availableProcessors())
             val reuse=settings.getBoolean(AiPerformance.REUSE_KEY,true)
             val once=settings.getBoolean(AiPerformance.LANGUAGE_KEY,false)
-            releaseJob?.cancel()
             if(!reuse||cachedModel!=spec.id)closeCached()
             if(t.duration>12*60*1000L)throw IOException("현재 AI 분석은 12분 이하 곡을 지원합니다")
             report(0,"음악 디코딩")
@@ -153,9 +144,9 @@ object DeviceLyrics {
                 report(100,"확인 후 저장하세요")
                 success=true
                 output.toString()
-            }finally{if(reuse&&success)releaseLater()else closeCached()}
+            }finally{if(!retainForBatch||!reuse||!success)closeCached()}
         }
-        }finally{_activeAnalysis.value=null;if(cachedHandle!=0L&&releaseJob?.isActive!=true)releaseLater()}
+        }finally{_activeAnalysis.value=null;if(!retainForBatch)withContext(NonCancellable+Dispatchers.IO){closeCached()}}
     }
 }
 

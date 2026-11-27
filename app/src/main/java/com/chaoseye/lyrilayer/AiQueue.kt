@@ -103,7 +103,7 @@ internal object AiQueue {
                         }
                         if (!DeviceLyrics.supported() || !DeviceLyrics.ready(c)) error("온라인 싱크 가사 없음 · AI 모델을 다운로드하세요.")
                         _live.update { it.copy(stage="AI 분석 준비") }
-                        val raw=DeviceLyrics.extract(c,t,item.language,preview={text->
+                        val raw=DeviceLyrics.extract(c,t,item.language,retainForBatch=true,preview={text->
                             _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(preview=text)else old}
                         }){n,stage->
                             _live.update{old->if(old.key==item.key&&!old.stopping)old.copy(percent=n.coerceIn(0,100),stage=stage)else old}
@@ -151,7 +151,7 @@ internal object AiQueue {
             finally {
                 try{withContext(NonCancellable){active?.let{item->
                     if(dao.get(item.key)?.state=="running")dao.update(item.copy(state="pending",message="분석 중단 · 다시 시작 가능"))
-                }}}finally{_live.value=QueueLive();task=null}
+                }}}finally{try{DeviceLyrics.releaseBatchModel()}finally{_live.value=QueueLive();task=null}}
             }
         }
     }

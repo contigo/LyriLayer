@@ -5,9 +5,12 @@ import android.os.SystemClock
 import androidx.work.*
 import kotlinx.coroutines.*
 import java.security.MessageDigest
+import java.util.UUID
 
 class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
     override suspend fun doWork(): Result {
+        val session=inputData.getString(SESSION_KEY)
+        if(!isSessionActive(session))return Result.failure(workDataOf("lastError" to "수집 중단 · 앱에서 다시 시작하세요"))
         val tracks=try { withContext(Dispatchers.IO) { Library.scan(applicationContext).sortedBy { it.uri } } } catch(e:SecurityException) { return Result.failure(workDataOf("lastError" to "음악 파일 접근 권한을 확인하세요")) }
         val prefs=applicationContext.getSharedPreferences("batch_progress",Context.MODE_PRIVATE)
         val digest=MessageDigest.getInstance("SHA-256")
@@ -32,7 +35,8 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
         val start=SystemClock.elapsedRealtime()
         while(done<tracks.size){
             currentCoroutineContext().ensureActive()
-            // Resume with the same work ID before WorkManager's normal execution limit.
+            if(!isSessionActive(session))return Result.failure(snapshot())
+            // Continue only within the same explicitly started foreground session.
             if(SystemClock.elapsedRealtime()-start>6*60*1000L){checkpoint();return Result.retry()}
             val t=tracks[done]
             setProgress(snapshot("${t.artist} - ${t.title}"))
@@ -49,6 +53,7 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
         val byUri=tracks.associateBy{it.uri}
         for(uri in retryUris.toList()){
             currentCoroutineContext().ensureActive()
+            if(!isSessionActive(session))return Result.failure(snapshot())
             if(SystemClock.elapsedRealtime()-start>6*60*1000L){checkpoint();return Result.retry()}
             val t=byUri[uri]
             if(t==null){retryUris.remove(uri);checkpoint();continue}
@@ -67,13 +72,23 @@ class BatchWorker(c: Context,p: WorkerParameters): CoroutineWorker(c,p) {
     }
     companion object {
         const val NAME="lyrics_batch"
+        private const val SESSION_KEY="foreground_session"
+        @Volatile private var foregroundSession:String?=null
+        fun enterForeground(){if(foregroundSession==null)foregroundSession=UUID.randomUUID().toString()}
+        fun leaveForeground(c:Context){
+            foregroundSession=null
+            WorkManager.getInstance(c.applicationContext).cancelUniqueWork(NAME)
+        }
+        private fun isSessionActive(session:String?)=session!=null&&session==foregroundSession
         fun savedProgress(c:Context,id:String):Data {
             val p=c.getSharedPreferences("batch_progress",Context.MODE_PRIVATE)
             if(p.getString("id","")!=id)return Data.EMPTY
             return workDataOf("done" to p.getInt("done",0),"total" to p.getInt("total",0),"found" to p.getInt("found",0),"missing" to p.getInt("missing",0),"errors" to p.getInt("errors",0),"lastError" to p.getString("lastError","").orEmpty(),"retryPending" to p.getStringSet("retryUris",emptySet()).orEmpty().size,"errorLog" to p.getString("errorLog","").orEmpty().takeLast(2700))
         }
         fun start(c:Context):Operation {
+            val session=checkNotNull(foregroundSession){"앱 화면에서 수집을 시작하세요."}
             val request=OneTimeWorkRequestBuilder<BatchWorker>()
+                .setInputData(workDataOf(SESSION_KEY to session))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.LINEAR,10,java.util.concurrent.TimeUnit.SECONDS).build()
             return WorkManager.getInstance(c).enqueueUniqueWork(NAME,ExistingWorkPolicy.KEEP,request)

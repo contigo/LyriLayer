@@ -14,6 +14,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 
 @Composable
@@ -23,7 +27,8 @@ internal fun ColumnScope.AiQueueScreen(context:Context, tracks:List<Track>, lyri
     val live by AiQueue.live.collectAsStateWithLifecycle()
     val notice by AiQueue.notice.collectAsStateWithLifecycle()
     var clock by remember{mutableLongStateOf(android.os.SystemClock.elapsedRealtime())}
-    LaunchedEffect(live.running){while(live.running){clock=android.os.SystemClock.elapsedRealtime();delay(1000)}}
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(live.running,lifecycle){if(live.running)lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){while(isActive){clock=android.os.SystemClock.elapsedRealtime();delay(1000)}}}
     LaunchedEffect(Unit){AiQueue.initialize(context)}
     var filter by remember{mutableStateOf("all")}
     var language by remember{mutableStateOf("auto")}

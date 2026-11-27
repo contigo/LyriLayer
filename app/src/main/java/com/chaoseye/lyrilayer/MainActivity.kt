@@ -4,6 +4,10 @@ import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import android.content.Intent
+import android.database.ContentObserver
+import android.provider.MediaStore
+import android.os.Handler
+import android.os.Looper
 import android.content.ComponentName
 import android.service.notification.NotificationListenerService
 import android.content.pm.PackageManager
@@ -36,6 +40,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flowOf
 import androidx.work.WorkManager
 import androidx.work.WorkInfo
 import androidx.compose.foundation.rememberScrollState
@@ -64,6 +70,11 @@ class MainActivity : ComponentActivity() {
     private val updateInstaller=registerForActivityResult(ActivityResultContracts.StartActivityForResult()){
         AppUpdates.installerReturned(this)
     }
+    override fun onStart(){super.onStart();BatchWorker.enterForeground()}
+    override fun onStop(){
+        if(!isChangingConfigurations)BatchWorker.leaveForeground(this)
+        super.onStop()
+    }
     override fun onResume() { super.onResume(); refresh.intValue++ }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,11 +94,14 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(Unit){if(updateSupported)AppUpdates.check(this@MainActivity,automatic=true)}
         val audioPermission=FloatingPermissions.audioName()
         val allowed=FloatingPermissions.audioGranted(this)
+        var page by rememberSaveable { mutableIntStateOf(0) }
+        var settingsScreen by rememberSaveable { mutableStateOf("main") }
+        val libraryVisible=page!=2
         val db=remember { LyricsDb.get(this) }
-        val stored by remember { db.dao().observe() }.collectAsStateWithLifecycle(initialValue=emptyList())
+        val stored by remember(libraryVisible) { if(libraryVisible)db.dao().observe() else flowOf(emptyList<Lyric>()) }.collectAsStateWithLifecycle(initialValue=emptyList())
         val map=remember(stored) { stored.associateBy { it.key } }
         val musicDao=remember{MusicInfoDb.get(this@MainActivity).dao()}
-        val musicRows by remember{musicDao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
+        val musicRows by remember(libraryVisible){if(libraryVisible)musicDao.observe() else flowOf(emptyList())}.collectAsStateWithLifecycle(initialValue=emptyList())
         val musicMap=remember(musicRows){musicRows.associateBy{it.key}}
         var musicDetail by remember{mutableStateOf<Track?>(null)}
         var tracks by remember { mutableStateOf(emptyList<Track>()) }
@@ -105,8 +119,6 @@ class MainActivity : ComponentActivity() {
         var filterMenu by remember{mutableStateOf(false)}
         var collectionDetails by rememberSaveable{mutableStateOf(false)}
         var lyricFilter by rememberSaveable { mutableStateOf("all") }
-        var page by rememberSaveable { mutableIntStateOf(0) }
-        var settingsScreen by rememberSaveable { mutableStateOf("main") }
         var queueScreen by rememberSaveable { mutableStateOf(false) }
         var fingerprintScreen by rememberSaveable { mutableStateOf(false) }
         val fingerprintLive by MusicRecognitionBatch.live.collectAsStateWithLifecycle()
@@ -115,7 +127,8 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled=page==0&&searchScreen&&!queueScreen&&!fingerprintScreen){searchScreen=false;query=""}
         val queuedLive by AiQueue.live.collectAsStateWithLifecycle()
         val queueDao=remember{AiQueueDb.get(this@MainActivity).dao()}
-        val queuedEntries by remember{queueDao.observe()}.collectAsStateWithLifecycle(initialValue=emptyList())
+        val observeQueueSummary=page==0&&!queueScreen&&!fingerprintScreen&&queuedLive.running
+        val queuedEntries by remember(observeQueueSummary){if(observeQueueSummary)queueDao.observe() else flowOf(emptyList<AiQueueEntry>())}.collectAsStateWithLifecycle(initialValue=emptyList())
         val queuedProgress=remember(queuedEntries,queuedLive.key,queuedLive.percent){
             AiQueueProgress.calculate(queuedEntries,queuedLive.key,queuedLive.percent)
         }
@@ -178,7 +191,12 @@ class MainActivity : ComponentActivity() {
         val overlayAllowed=remember(tick) { Settings.canDrawOverlays(this) }
         LaunchedEffect(tick,allowed,listenerAllowed) {
             if(listenerAllowed&&!Playback.connected.value) FloatingPermissions.rebind(this@MainActivity)
-            if(allowed&&listenerAllowed) Playback.retry.value++
+        }
+        // Permission changes, unlike ordinary Activity resumes, may require rematching.
+        var previousAudioPermission by remember{mutableStateOf(allowed)}
+        LaunchedEffect(allowed){
+            if(allowed&&!previousAudioPermission&&listenerAllowed)Playback.retry.value++
+            previousAudioPermission=allowed
         }
         val work=remember { WorkManager.getInstance(this) }
         val jobs by remember { work.getWorkInfosForUniqueWorkFlow(BatchWorker.NAME) }.collectAsStateWithLifecycle(initialValue=emptyList())
@@ -251,7 +269,31 @@ class MainActivity : ComponentActivity() {
                 refresh.intValue++
             }
         }
-        LaunchedEffect(tick,allowed) { tracks=if(allowed) withContext(Dispatchers.IO) { runCatching { Library.scan(this@MainActivity) }.getOrDefault(emptyList()) } else emptyList() }
+        var libraryGeneration by remember{mutableLongStateOf(0L)}
+        var loadedGeneration by remember{mutableLongStateOf(-1L)}
+        var observerRegistered by remember{mutableStateOf(false)}
+        DisposableEffect(allowed){
+            val observer=object:ContentObserver(Handler(Looper.getMainLooper())){
+                override fun onChange(selfChange:Boolean){libraryGeneration++}
+            }
+            val registered=allowed&&runCatching{
+                contentResolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,true,observer)
+            }.isSuccess
+            observerRegistered=registered
+            libraryGeneration++;loadedGeneration=-1L
+            onDispose{if(registered)runCatching{contentResolver.unregisterContentObserver(observer)}}
+        }
+        LaunchedEffect(allowed,libraryVisible,observerRegistered){
+            if(!allowed){tracks=emptyList();loadedGeneration=-1L}
+            else if(libraryVisible)lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){
+                snapshotFlow{if(observerRegistered)libraryGeneration else refresh.intValue.toLong()}.collectLatest{generation->
+                    if(loadedGeneration!=generation){
+                        val result=withContext(Dispatchers.IO){runCatching{Library.scan(this@MainActivity)}}
+                        result.onSuccess{tracks=it;loadedGeneration=generation}
+                    }
+                }
+            }
+        }
         Scaffold(bottomBar={ if(!(page==2&&settingsScreen!="main")&&!(page==0&&(queueScreen||searchScreen||fingerprintScreen))) NavigationBar { listOf("라이브러리","싱크 편집","설정").forEachIndexed { i,s -> NavigationBarItem(selected=page==i,onClick={page=i;settingsScreen="main";queueScreen=false;searchScreen=false;fingerprintScreen=false;query=""},icon={if(i==1)RecognitionGlyph("clock") else Text(if(i==0)"♫" else "⚙")},label={Text(s)}) } } }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=12.dp,vertical=8.dp).then(if(page==2)Modifier.verticalScroll(rememberScrollState()) else Modifier),verticalArrangement=Arrangement.spacedBy(if(page==0)6.dp else 10.dp)) {
                 if(page==0&&fingerprintScreen){
@@ -388,7 +430,7 @@ class MainActivity : ComponentActivity() {
                             Card(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(horizontal=10.dp,vertical=4.dp),verticalArrangement=Arrangement.spacedBy(2.dp)){
                                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                                        Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기 / 이어서 처리"},style=MaterialTheme.typography.titleSmall,fontSize=14.sp)
+                                        Text(when(job.state){WorkInfo.State.SUCCEEDED->"수집 완료";WorkInfo.State.CANCELLED->"수집 중단";WorkInfo.State.FAILED->"수집 실패";WorkInfo.State.RUNNING->"가사 수집 중";else->"수집 대기"},style=MaterialTheme.typography.titleSmall,fontSize=14.sp)
                                         Text("$percent%",style=MaterialTheme.typography.titleMedium,fontSize=16.sp,color=when(job.state){WorkInfo.State.SUCCEEDED->successColor;WorkInfo.State.FAILED->failureColor;WorkInfo.State.CANCELLED->neutralColor;else->successColor})
                                     }
                                     if(!job.state.isFinished)LinearProgressIndicator(progress={percent/100f},modifier=Modifier.fillMaxWidth().height(5.dp),color=successColor)

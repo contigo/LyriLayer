@@ -304,7 +304,7 @@ class MusicListener : NotificationListenerService() {
             else->emptyList()
         }
         // No periodic timer when no lyrics exist; media/DB/settings events wake the listener.
-        if(timedLines.isEmpty()&&content==null)return null
+        if(timedLines.isEmpty()&&(content==null||overlayFailure.isBlank()))return null
         val offset=if(lines.isNotEmpty())lyric?.offset?:0L else 0L
         return OverlayTiming.nextDelay(timedLines,position,offset,state.playbackSpeed,state.lastPositionUpdateTime>0,track.duration)
     }
