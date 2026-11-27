@@ -169,6 +169,9 @@ class MainActivity : ComponentActivity() {
         val scope=rememberCoroutineScope()
         val now by Playback.now.collectAsStateWithLifecycle()
         val listenerConnected by Playback.connected.collectAsStateWithLifecycle()
+        val sessionDiagnostics by Playback.diagnostics.collectAsStateWithLifecycle()
+        var overlayProbeRunning by remember{mutableStateOf(false)}
+        var overlayProbeStatus by remember{mutableStateOf("")}
         val listenerComponent=remember { FloatingPermissions.component(this) }
         val listenerAllowed=remember(tick) { FloatingPermissions.listenerGranted(this) }
         val overlayAllowed=remember(tick) { Settings.canDrawOverlays(this) }
@@ -291,7 +294,19 @@ class MainActivity : ComponentActivity() {
                         Text("재생 감지: "+if(now.playing)"재생 중" else "재생 대기",color=if(now.playing)successColor else neutralColor,fontSize=14.sp)
                         Text("현재 곡: "+(now.track?.title?.takeIf{it.isNotBlank()} ?: "곡 정보 대기"),fontSize=16.sp)
                         Text("플로팅 상태: "+if(!listenerAllowed)"알림 접근 권한 필요" else if(!listenerConnected)"서비스 연결 대기" else now.overlayStatus,fontSize=14.sp,color=if(listenerConnected&&now.overlayStatus.endsWith("표시 중"))successColor else neutralColor)
-                        OutlinedButton(onClick={if(listenerAllowed)NotificationListenerService.requestRebind(listenerComponent);Playback.retry.value++}){Text("음악 감지 다시 연결")}
+                        Text("감지된 세션: "+sessionDiagnostics.packages.joinToString(", ").ifBlank{"없음"},fontSize=12.sp)
+                        Text("선택 세션: "+sessionDiagnostics.selectedPackage.ifBlank{"없음"}+" · 상태 "+(sessionDiagnostics.state?.toString()?:"없음"),fontSize=12.sp)
+                        Text(if(sessionDiagnostics.ticking)"싱크 갱신 중 (150ms)" else "이벤트 대기",fontSize=12.sp,color=neutralColor)
+                        if(sessionDiagnostics.error.isNotBlank())Text(sessionDiagnostics.error,fontSize=12.sp,color=failureColor)
+                        OutlinedButton(enabled=!overlayProbeRunning&&overlayAllowed,onClick={
+                            overlayProbeRunning=true
+                            scope.launch{
+                                try{OverlayProbe.run(this@MainActivity){overlayProbeStatus=it}}
+                                finally{overlayProbeRunning=false}
+                            }
+                        },modifier=Modifier.fillMaxWidth()){Text(if(overlayProbeRunning)"플로팅 창 테스트 중" else "플로팅 창 단독 테스트 (5초)")}
+                        if(overlayProbeStatus.isNotBlank())Text(overlayProbeStatus,fontSize=12.sp)
+                        OutlinedButton(onClick={if(listenerAllowed)FloatingPermissions.rebind(this@MainActivity);Playback.retry.value++}){Text("음악 감지 다시 연결")}
 
                     if(!listenerAllowed||!overlayAllowed)Button(onClick={startAccessPass()}){Text("필수 권한 설정")}
                 }else{
