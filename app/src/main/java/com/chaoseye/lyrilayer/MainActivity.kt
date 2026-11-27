@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -198,6 +199,14 @@ class MainActivity : ComponentActivity() {
         var showMissingOverlay by remember { mutableStateOf(prefs.getBoolean(OverlayContent.SHOW_MISSING,true)) }
         var plainMode by remember { mutableStateOf(prefs.getString(PlainSync.MODE_KEY,PlainSync.ESTIMATE)?:PlainSync.ESTIMATE) }
         var testMode by remember { mutableStateOf(prefs.getBoolean("overlay_test",false)) }
+        var overlayTransparency by remember { mutableIntStateOf(OverlayTransparency.normalize(prefs.getInt(OverlayTransparency.KEY,OverlayTransparency.DEFAULT))) }
+        fun saveOverlayTransparency(value:Int){
+            val normalized=OverlayTransparency.normalize(value)
+            if(overlayTransparency!=normalized){
+                overlayTransparency=normalized
+                prefs.edit().putInt(OverlayTransparency.KEY,normalized).apply()
+            }
+        }
         var overlayPosition by remember { mutableIntStateOf(OverlayPosition.normalize(prefs.getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))) }
         fun saveOverlayPosition(value:Int){
             overlayPosition=OverlayPosition.normalize(value)
@@ -269,7 +278,7 @@ class MainActivity : ComponentActivity() {
                         }
                         BoxWithConstraints(Modifier.width(150.dp).height(230.dp).align(Alignment.CenterHorizontally).border(1.dp,MaterialTheme.colorScheme.outline,RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(18.dp)).padding(8.dp)){
                             Text("화면 미리보기",modifier=Modifier.align(Alignment.Center),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            Box(Modifier.align(Alignment.TopCenter).offset(y=(maxHeight-40.dp)*(overlayPosition/100f)).fillMaxWidth().height(40.dp).background(Color(0xDD000000),RoundedCornerShape(8.dp)).padding(4.dp),contentAlignment=Alignment.Center){
+                            Box(Modifier.align(Alignment.TopCenter).offset(y=(maxHeight-40.dp)*(overlayPosition/100f)).fillMaxWidth().height(40.dp).alpha(OverlayTransparency.windowAlpha(overlayTransparency)).background(Color(0xE6000000),RoundedCornerShape(8.dp)).padding(4.dp),contentAlignment=Alignment.Center){
                                 Text("가사 표시 위치",fontSize=12.sp,color=Color.White)
                             }
                         }
@@ -481,7 +490,7 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         if(settingsScreen=="main"){
                             Text("설정",style=MaterialTheme.typography.titleLarge)
-                            val categories=listOf(Triple("permissions","앱 권한","필수 권한 "+listOf(allowed,listenerAllowed,overlayAllowed).count{it}+"/3"),Triple("floating","플로팅 가사","표시 방식 · 위치 · 테스트"),Triple("lyrics","가사 검색","LyricKit · 온라인 검색"),Triple("ai","AI 분석","모델 · 성능 · 자동 저장"),Triple("data","데이터 관리","오류 기록 · DB 초기화"))+if(updateSupported)listOf(Triple("update","앱 업데이트",AppUpdates.current(this@MainActivity)))else emptyList()
+                            val categories=listOf(Triple("permissions","앱 권한","필수 권한 "+listOf(allowed,listenerAllowed,overlayAllowed).count{it}+"/3"),Triple("floating","플로팅 가사","표시 방식 · 위치 · 투명도 · 테스트"),Triple("lyrics","가사 검색","LyricKit · 온라인 검색"),Triple("ai","AI 분석","모델 · 성능 · 자동 저장"),Triple("data","데이터 관리","오류 기록 · DB 초기화"))+if(updateSupported)listOf(Triple("update","앱 업데이트",AppUpdates.current(this@MainActivity)))else emptyList()
                             categories.forEach{(key,title,summary)->
                                 Surface(onClick={settingsScreen=key},modifier=Modifier.fillMaxWidth()){
                                     Row(Modifier.padding(vertical=10.dp,horizontal=4.dp),verticalAlignment=Alignment.CenterVertically){
@@ -515,6 +524,23 @@ class MainActivity : ComponentActivity() {
                             }
                             Switch(showMissingOverlay,{showMissingOverlay=it;prefs.edit().putBoolean(OverlayContent.SHOW_MISSING,it).apply()})
                         }
+                        HorizontalDivider()
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
+                            Text("가사 투명도: $overlayTransparency%",fontSize=16.sp)
+                            TextButton(onClick={saveOverlayTransparency(OverlayTransparency.DEFAULT)}){Text("기본값")}
+                        }
+                        Slider(value=overlayTransparency.toFloat(),onValueChange={saveOverlayTransparency(it.roundToInt())},valueRange=OverlayTransparency.MIN.toFloat()..OverlayTransparency.MAX.toFloat())
+                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                            Text("진하게",fontSize=12.sp,color=neutralColor)
+                            Text("투명하게",fontSize=12.sp,color=neutralColor)
+                        }
+                        Box(Modifier.fillMaxWidth().height(64.dp).background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(12.dp)),contentAlignment=Alignment.Center){
+                            Text("배경 화면 미리보기",fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            Box(Modifier.fillMaxWidth(0.88f).alpha(OverlayTransparency.windowAlpha(overlayTransparency)).background(Color(0xE6000000),RoundedCornerShape(16.dp)).padding(horizontal=16.dp,vertical=10.dp),contentAlignment=Alignment.Center){
+                                Text("플로팅 가사 미리보기",fontSize=18.sp,color=Color.White)
+                            }
+                        }
+                        Text("글자와 배경에 함께 적용됩니다. 다른 앱의 터치 통과를 위해 범위를 제한합니다.",fontSize=12.sp,color=neutralColor)
                         HorizontalDivider()
                         Text("일반 가사 플로팅 방식",fontSize=16.sp)
                         listOf(PlainSync.ESTIMATE to "자동 스크롤 (추정)",PlainSync.STATIC to "일반 가사 고정 표시",PlainSync.OFF to "곡 정보만 표시").forEach{(key,label)->

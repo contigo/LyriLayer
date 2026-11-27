@@ -313,7 +313,9 @@ class MusicListener : NotificationListenerService() {
         val dp=ctx.resources.displayMetrics.density
         val (areaWidth,areaHeight)=overlayArea()
         val width=(areaWidth*0.88f).toInt().coerceAtLeast(1)
-        val percent=OverlayPosition.normalize(getSharedPreferences("settings",Context.MODE_PRIVATE).getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))
+        val prefs=getSharedPreferences("settings",Context.MODE_PRIVATE)
+        val percent=OverlayPosition.normalize(prefs.getInt(OverlayPosition.KEY,OverlayPosition.DEFAULT))
+        val windowAlpha=OverlayTransparency.windowAlpha(prefs.getInt(OverlayTransparency.KEY,OverlayTransparency.DEFAULT))
         val existing=overlay
         val view=existing?:LinearLayout(ctx).apply {
             orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER
@@ -344,15 +346,15 @@ class MusicListener : NotificationListenerService() {
             if(oldParams==null){
                 val params=WindowManager.LayoutParams(width,WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,PixelFormat.TRANSLUCENT).apply {
                     gravity=Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                    this.y=y;alpha=0.78f
+                    this.y=y;alpha=windowAlpha
                     if(Build.VERSION.SDK_INT>=30){
                         setFitInsetsTypes(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                         setFitInsetsIgnoringVisibility(true)
                     }
                 }
                 wm.addView(view,params);overlay=view
-            }else if(oldParams.y!=y||oldParams.width!=width){
-                oldParams.y=y;oldParams.width=width;wm.updateViewLayout(view,oldParams)
+            }else if(oldParams.y!=y||oldParams.width!=width||oldParams.alpha!=windowAlpha){
+                oldParams.y=y;oldParams.width=width;oldParams.alpha=windowAlpha;wm.updateViewLayout(view,oldParams)
             }
             overlayFailure=""
             return true
