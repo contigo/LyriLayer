@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.room.withTransaction
 import kotlinx.coroutines.*
@@ -85,7 +86,18 @@ import kotlinx.coroutines.*
         onDispose{lastPosition=player.position;player.close();lifecycle.removeObserver(observer)}
     }
     LaunchedEffect(player.ready){if(player.ready&&lastPosition>0)player.seek(lastPosition)}
-    LaunchedEffect(player){while(isActive){player.refresh();delay(100)}}
+    // The preview clock is needed only during actual foreground playback.
+    // Pause, completion and seek callbacks already publish the final position.
+    LaunchedEffect(player,lifecycle,player.ready,player.playing,player.seeking){
+        if(player.ready&&player.playing&&!player.seeking){
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED){
+                while(isActive&&player.ready&&player.playing&&!player.seeking){
+                    player.refresh()
+                    delay(100)
+                }
+            }
+        }
+    }
     LaunchedEffect(selected){if(selected in rows.indices)list.animateScrollToItem((selected-2).coerceAtLeast(0))}
     fun leave(){if(!saving){player.pause();if(dirty)discard=true else onClose()}}
     BackHandler(enabled=true){leave()}
