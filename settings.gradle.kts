@@ -8,3 +8,4 @@ include(":lyrickit")
 include(":musickit")
 
 include(":recognitionkit")
+include(":ailyrickit")

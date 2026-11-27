@@ -30,6 +30,8 @@ android {
             isDebuggable = false
         }
     }
+    // Both native modules use the same pinned NDK and shared C++ runtime.
+    packaging { jniLibs.pickFirsts += "lib/arm64-v8a/libc++_shared.so" }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
@@ -37,6 +39,7 @@ android {
 dependencies {
     implementation(project(":lyrickit"))
     implementation(project(":recognitionkit"))
+    implementation(project(":ailyrickit"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation(platform("androidx.compose:compose-bom:2025.10.00"))
     implementation("androidx.compose.material3:material3")

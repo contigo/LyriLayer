@@ -1,0 +1,1 @@
+-keep class com.chaoseye.ailyrickit.engine.NativeWhisperBackend { *; }

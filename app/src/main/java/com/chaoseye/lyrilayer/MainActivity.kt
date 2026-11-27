@@ -658,7 +658,8 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Row(verticalAlignment=Alignment.CenterVertically){Text("일괄 분석 모델 재사용",Modifier.weight(1f));Switch(aiReuse,{aiReuse=it;aiPrefs.edit().putBoolean(AiPerformance.REUSE_KEY,it).apply()},enabled=!performanceBusy)}
-                        Row(verticalAlignment=Alignment.CenterVertically){Text("곡당 언어 감지 1회 (혼합 언어 주의)",Modifier.weight(1f));Switch(aiLanguageOnce,{aiLanguageOnce=it;aiPrefs.edit().putBoolean(AiPerformance.LANGUAGE_KEY,it).apply()},enabled=!performanceBusy)}
+                        if(aiModel=="small")Text("Small · 대표 언어 자동 감지 최적화 (혼합 언어는 검토 필요)",fontSize=12.sp)
+                        else Row(verticalAlignment=Alignment.CenterVertically){Text("곡당 언어 감지 1회 (혼합 언어 주의)",Modifier.weight(1f));Switch(aiLanguageOnce,{aiLanguageOnce=it;aiPrefs.edit().putBoolean(AiPerformance.LANGUAGE_KEY,it).apply()},enabled=!performanceBusy)}
                         Text("CPU ARM64 최적화 · GPU 가속은 아직 미지원",fontSize=12.sp)
                         Text(if(modelReady)AiPerformance.model(aiModel).title+" · 모델 준비됨" else "선택 모델을 최초 1회 다운로드하세요. 이후 음원은 기기에서만 분석합니다.")
                         Button(enabled=!performanceBusy&&DeviceLyrics.supported(),onClick={scope.launch {
@@ -841,7 +842,7 @@ class MainActivity : ComponentActivity() {
                         }
                         LinearProgressIndicator(progress={aiProgress/100f},modifier=Modifier.fillMaxWidth(),color=aiColor)
                         Text("실시간 가사 미리보기 · ${previewLines.size}줄",style=MaterialTheme.typography.titleSmall)
-                        Text("25초 단위 음원 구간의 인식이 끝나면 자동 갱신됩니다.",fontSize=12.sp)
+                        Text("음원 구간의 인식이 끝나면 자동 갱신됩니다.",fontSize=12.sp)
                         Card(Modifier.fillMaxWidth()){
                             if(previewLines.isEmpty())Text("첫 구간 인식 대기 중…",modifier=Modifier.padding(12.dp),fontSize=14.sp)
                             else LazyColumn(state=previewState,modifier=Modifier.fillMaxWidth().height(180.dp).padding(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){

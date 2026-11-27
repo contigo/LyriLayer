@@ -10,7 +10,12 @@ class AiPerformanceTest{
         assertEquals(1,AiPerformance.threads(0,0))
     }
     @Test fun modelSelection(){
-        assertEquals("base",AiPerformance.model(null).id)
+        assertEquals("small",AiPerformance.model(null).id)
+        assertEquals("base",AiPerformance.model("base").id)
+        assertEquals("small",AiPerformance.model("small").id)
+        assertTrue(AiPerformance.small.sizeValid(190085487L))
+        assertFalse(AiPerformance.small.sizeValid(190085486L))
+        assertEquals(64,AiPerformance.small.sha.length)
         assertEquals("tiny",AiPerformance.model("tiny").id)
         assertTrue(AiPerformance.base.sizeValid(59707625))
         assertFalse(AiPerformance.tiny.sizeValid(59707625))

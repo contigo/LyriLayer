@@ -1,6 +1,7 @@
 package com.chaoseye.lyrilayer
 
 import android.content.Context
+import com.chaoseye.ailyrickit.AiLyricKit
 import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -34,19 +35,21 @@ object DeviceLyrics {
     private val _activeAnalysis=MutableStateFlow<AiAnalysisProgress?>(null)
     internal val activeAnalysis=_activeAnalysis.asStateFlow()
     private var cachedHandle=0L
+    private var cachedKit:AiLyricKit?=null
     private var cachedModel=""
     private val verified=mutableMapOf<String,Pair<Long,Long>>()
     private val lock=Mutex()
     private val client=OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(60,TimeUnit.SECONDS).callTimeout(20,TimeUnit.MINUTES).build()
     fun supported()=Build.SUPPORTED_ABIS.any{it=="arm64-v8a"}
     private fun prefs(c:Context)=c.getSharedPreferences("settings",Context.MODE_PRIVATE)
-    internal fun selected(c:Context)=AiPerformance.model(prefs(c).getString(AiPerformance.MODEL_KEY,"base"))
+    internal fun selected(c:Context)=AiPerformance.model(prefs(c).getString(AiPerformance.MODEL_KEY,"small"))
     private fun model(c:Context,spec:WhisperModel)=File(File(c.filesDir,"whisper"),spec.filename)
     fun ready(c:Context)=selected(c).let{it.sizeValid(model(c,it).length())}
     // A single native context is used under lock; never share it concurrently.
     private fun closeCached(){
-        if(cachedHandle!=0L)NativeWhisper.close(cachedHandle)
-        cachedHandle=0L;cachedModel=""
+        val kit=cachedKit;cachedKit=null
+        val handle=cachedHandle;cachedHandle=0L;cachedModel=""
+        try{kit?.close()}finally{if(handle!=0L)NativeWhisper.close(handle)}
     }
     internal suspend fun releaseBatchModel()=withContext(NonCancellable+Dispatchers.IO){lock.withLock{closeCached()}}
     private suspend fun verifyModel(file:File,spec:WhisperModel):Boolean{
@@ -109,6 +112,32 @@ object DeviceLyrics {
             val once=settings.getBoolean(AiPerformance.LANGUAGE_KEY,false)
             if(!reuse||cachedModel!=spec.id)closeCached()
             if(t.duration>12*60*1000L)throw IOException("현재 AI 분석은 12분 이하 곡을 지원합니다")
+            if(spec.id=="small"){
+                val job=currentCoroutineContext()[Job]
+                var success=false
+                try{
+                    report(0,"Small · AI 모델 준비")
+                    val kit=cachedKit?:AiLyricKit.open(c,file,cancelled={job?.isActive==false}).also{
+                        cachedKit=it;cachedModel=spec.id
+                    }
+                    val result=kit.extract(Uri.parse(t.uri),language,threads,
+                        cancelled={job?.isActive==false},
+                        progress={p->
+                            val ratio=if(p.total>0)p.completed.toDouble()/p.total else 0.0
+                            val fraction=ratio.coerceIn(0.0,1.0)
+                            when(p.phase){
+                                "audio"->report((fraction*10).toInt(),"음악 디코딩")
+                                "language"->report(10+(fraction*15).toInt(),"대표 언어 감지")
+                                "decode"->report(25+(fraction*74).toInt(),"Small · 가사 인식")
+                            }
+                        },preview=preview)
+                    currentCoroutineContext().ensureActive()
+                    if(Lrc.parse(result.lrc).isEmpty())throw IOException("인식된 가사가 없습니다")
+                    report(100,"확인 후 저장하세요")
+                    success=true
+                    return@withContext result.lrc
+                }finally{if(!retainForBatch||!reuse||!success)closeCached()}
+            }
             report(0,"음악 디코딩")
             val pcm=AudioPcm.read(c,Uri.parse(t.uri))
             currentCoroutineContext().ensureActive()

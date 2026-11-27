@@ -14,8 +14,14 @@ internal object AiPerformance{
     val tiny=WhisperModel("tiny","Tiny · 빠른 분석 (약 31 MiB)","ggml-tiny-q5_1.bin",31000000L,33000000L,
         "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/c521a4b02f422512d734391fdf08bb08c0862f68/ggml-tiny-q5_1.bin")
-    val models=listOf(base,tiny)
-    fun model(id:String?)=models.firstOrNull{it.id==id}?:base
+    val small=WhisperModel("small","Small Q5_1 · AI 가사 엔진 (181 MiB)",
+        com.chaoseye.ailyrickit.model.ModelVerifier.FILE_NAME,
+        com.chaoseye.ailyrickit.model.ModelVerifier.SMALL_Q5_1_BYTES,
+        com.chaoseye.ailyrickit.model.ModelVerifier.SMALL_Q5_1_BYTES,
+        com.chaoseye.ailyrickit.model.ModelVerifier.MODEL_SHA256,
+        com.chaoseye.ailyrickit.model.ModelVerifier.MODEL_URL)
+    val models=listOf(small,base,tiny)
+    fun model(id:String?)=models.firstOrNull{it.id==id}?:small
     fun threads(requested:Int,available:Int):Int{
         val max=available.coerceIn(1,8)
         return if(requested<=0)minOf(6,max)else requested.coerceIn(1,max)
